@@ -7,31 +7,8 @@
 
 import UIKit
 import WebKit
-//import BabbageSDK
+import BabbageSDK
 
-struct BabbageSDK {
-    // Define the request and response objects
-    struct BabbageResponse: Decodable {
-        enum Category: String, Decodable {
-            case swift, combine, debugging, xcode
-        }
-
-        let type: String
-        let result: String // Hmm...
-        let id: String
-    }
-
-    struct BabbageCommand: Codable {
-        enum Category: String, Codable {
-            case swift, combine, debugging, xcode
-        }
-
-        let type: String
-        let call: String // Hmm...
-        let params: [String:String]
-        let id: String
-    }
-}
 // Controller responsible for handling interactions on the main view
 class ViewController: UIViewController, WKScriptMessageHandler, WKNavigationDelegate {
     
@@ -42,13 +19,15 @@ class ViewController: UIViewController, WKScriptMessageHandler, WKNavigationDele
     let PROTOCOL_ID = "crypton"
     let KEY_ID = "1"
     let HADES_BASE_URL = "http://localhost:3000" // "https://staging-mobile-portal.babbage.systems"
+   
+    private var sdk: BabbageSDK?
     
     override func loadView() {
         super.loadView()
         // Do any additional setup after loading the view.
         webView.navigationDelegate = self
         webView.customUserAgent = "babbage-webview-inlay"
-        
+
         // Supported callbacks (include to restrict unwanted generic callbacks?)
         webView.configuration.userContentController.add(self, name: "getPublicKey")
         webView.configuration.userContentController.add(self, name: "encrypt")
@@ -69,6 +48,9 @@ class ViewController: UIViewController, WKScriptMessageHandler, WKNavigationDele
         // Load the request url for hades server
         let request = NSURLRequest(url: URL(string: HADES_BASE_URL)!)
         webView.load(request as URLRequest)
+
+        // Initialize the sdk with the webview
+        sdk = BabbageSDK.init(webView: webView)
     }
     // Show/hide the Babbage Desktop webview
     @IBAction func toggleWebview(_ sender: Any) {
@@ -81,22 +63,12 @@ class ViewController: UIViewController, WKScriptMessageHandler, WKNavigationDele
         if let base64Encoded = utf8str?.base64EncodedString(options: Data.Base64EncodingOptions(rawValue: 0)) {
             print("Encoded: \(base64Encoded)")
             
-            let cmd = BabbageSDK.BabbageCommand(type: "CWI", call:"encrypt", params: ["plaintext":"\(base64Encoded)", "protocolID": PROTOCOL_ID, "keyID": KEY_ID, "originator": "projectbabbage.com", "returnType": "string"], id: "fooisabar")
-            runCommand(cmd: cmd)
-
-            // For decoding base64 to utf8 string
-//            if let base64Decoded = Data(base64Encoded: base64Encoded, options: Data.Base64DecodingOptions(rawValue: 0))
-//            .map({ String(data: $0, encoding: .utf8) }) {
-//                // Convert back to a string
-//                print("Decoded: \(base64Decoded ?? "")")
-//            }
+            sdk?.encrypt(plaintext: base64Encoded, protocolID: PROTOCOL_ID, keyID: KEY_ID)
         }
     }
     // Decrypts the text from the textview
     @IBAction func decrypt(_ sender: Any) {
-        // TODO: Check text data type?
-        let cmd = BabbageSDK.BabbageCommand(type: "CWI", call:"decrypt", params: ["ciphertext":"\(textView.text!)", "protocolID": PROTOCOL_ID, "keyID":  KEY_ID, "originator": "projectbabbage.com", "returnType": "string"], id: "fooisabar")
-        runCommand(cmd: cmd)
+        sdk?.decrypt(ciphertext: textView.text!, protocolID: PROTOCOL_ID, keyID: KEY_ID)
     }
 
     // Callback recieved from webkit.messageHandler.postMessage
@@ -121,39 +93,13 @@ class ViewController: UIViewController, WKScriptMessageHandler, WKNavigationDele
         }
     }
     
-    // Helper function to convert dictionary Swift structure to JSON object string
-    func convertDictionaryToJSON(dictionary: [String: String]) -> String {
-        let theJSONData = try? JSONSerialization.data(
-          withJSONObject: dictionary,
-          options: .prettyPrinted
-          )
-        let jsonString = String(data: theJSONData!,
-            encoding: String.Encoding.ascii
-        )
-        return jsonString!
-    }
-    
-    // Execute the JS command
-    func runCommand(cmd: BabbageSDK.BabbageCommand) {
-        do {
-            let jsonData = try JSONEncoder().encode(cmd)
-            let jsonString = String(data: jsonData, encoding: .utf8)!
-            webView.evaluateJavaScript("window.postMessage(\(jsonString))") { (result, error) in
-//                if error == nil {
-//                    print(result as Any)
-//                }
-            }
-        } catch {
-            
-        }
-    }
     // Webview call back for when the view loads
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
       // This function is called when the webview finishes navigating to the webpage.
       // We use this to send data to the webview when it's loaded.
         print("loaded")
         let cmd = BabbageSDK.BabbageCommand(type: "CWI", call:"waitForAuthentication", params: [:], id: "waitForAuthentication")
-        runCommand(cmd: cmd)
+        BabbageSDK.init(webView: self.webView).runCommand(webView: webView, cmd: cmd)
     }
 }
 
