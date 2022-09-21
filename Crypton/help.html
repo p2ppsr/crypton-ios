@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+    <h1 id="title">Test Site</h1>
+    
+    <script>
+        window.addEventListener('message', messageListener, false);
+
+           function messageListener(event) {
+               document.getElementById("title").innerHTML = "Message recieved!";
+               try {
+                   webkit.messageHandlers.callback.postMessage('Message recieved!');
+                } catch(err) {
+                    console.log('Can not reach native code');
+                }
+           }
+    </script>
+    
+    <script>
+<!--        function addPerson(name, age) {-->
+<!--          //It's really this simple. We'll call this from the native code.-->
+<!--<!--          console.log('Name: ' + name + ' Age: ' + age);-->-->
+<!--          document.getElementById("title").innerHTML = 'Name: ' + name + ' Age: ' + age;-->
+<!--          sendNameToNative(name)-->
+<!--        }-->
+<!---->
+<!--        function sendNameToNative(name) {-->
+<!--          //This function will send the name to native.-->
+<!--          //We can add an EventListener to an object on the page to call this function when it is clicked.-->
+<!--          try {-->
+<!--            webkit.messageHandlers.callback.postMessage(name);-->
+<!--          } catch(err) {-->
+<!--            console.log('Can not reach native code');-->
+<!--          }-->
+<!--        }-->
+    </script>
+</html>
