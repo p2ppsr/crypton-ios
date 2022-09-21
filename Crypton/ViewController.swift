@@ -41,6 +41,7 @@ class ViewController: UIViewController, WKScriptMessageHandler, WKNavigationDele
     
     let PROTOCOL_ID = "crypton"
     let KEY_ID = "1"
+    let HADES_BASE_URL = "http://localhost:3000" // "https://staging-mobile-portal.babbage.systems"
     
     override func loadView() {
         super.loadView()
@@ -53,6 +54,8 @@ class ViewController: UIViewController, WKScriptMessageHandler, WKNavigationDele
         webView.configuration.userContentController.add(self, name: "encrypt")
         webView.configuration.userContentController.add(self, name: "decrypt")
         webView.configuration.userContentController.add(self, name: "closeBabbage")
+        webView.configuration.userContentController.add(self, name: "isAuthenticated")
+        webView.configuration.userContentController.add(self, name: "waitForAuthentication")
         
         // Disable zooming on webview
         let source: String = "var meta = document.createElement('meta');" +
@@ -64,8 +67,7 @@ class ViewController: UIViewController, WKScriptMessageHandler, WKNavigationDele
         webView.configuration.userContentController.addUserScript(script)
         
         // Load the request url for hades server
-        let request = NSURLRequest(url: URL(string: "http://localhost:3000")!)
-////        let request = NSURLRequest(url: URL(string: "https://staging-mobile-portal.babbage.systems")!)
+        let request = NSURLRequest(url: URL(string: HADES_BASE_URL)!)
         webView.load(request as URLRequest)
     }
     // Show/hide the Babbage Desktop webview
@@ -103,11 +105,19 @@ class ViewController: UIViewController, WKScriptMessageHandler, WKNavigationDele
         guard let response = message.body as? String else { return }
         
         if (response == "closeBabbage") {
-            webView.isHidden = true;
+            webView.isHidden = true
         } else {
             // Use this to decode JSON. Needs better error handling though...
             let responseObject = try! JSONDecoder().decode(BabbageSDK.BabbageResponse.self, from:response.data(using: .utf8)!)
-            textView.text = responseObject.result
+            
+            // Once we recieve the callback, we can dismiss the webview and show the user the app
+            if (responseObject.id == "waitForAuthentication") {
+                if (responseObject.result == "true") {
+                    webView.isHidden = true
+                }
+            } else {
+                textView.text = responseObject.result
+            }
         }
     }
     
@@ -142,6 +152,8 @@ class ViewController: UIViewController, WKScriptMessageHandler, WKNavigationDele
       // This function is called when the webview finishes navigating to the webpage.
       // We use this to send data to the webview when it's loaded.
         print("loaded")
+        let cmd = BabbageSDK.BabbageCommand(type: "CWI", call:"waitForAuthentication", params: [:], id: "waitForAuthentication")
+        runCommand(cmd: cmd)
     }
 }
 
