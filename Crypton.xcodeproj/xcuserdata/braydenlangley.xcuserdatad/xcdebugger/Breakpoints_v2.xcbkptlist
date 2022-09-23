@@ -3,4 +3,133 @@
    uuid = "6F594FF6-ACAB-48B9-ABC8-37EC5B7585E7"
    type = "1"
    version = "2.0">
+   <Breakpoints>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
+         <BreakpointContent
+            uuid = "532E14D3-3FF4-4BDD-B6C8-4D8AE6E66042"
+            shouldBeEnabled = "Yes"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            filePath = "BabbageSDK/Sources/BabbageSDK/BabbageSDK.swift"
+            startingColumnNumber = "9223372036854775807"
+            endingColumnNumber = "9223372036854775807"
+            startingLineNumber = "235"
+            endingLineNumber = "235"
+            landmarkName = "waitForAuthentication()"
+            landmarkType = "7">
+            <Locations>
+               <Location
+                  uuid = "532E14D3-3FF4-4BDD-B6C8-4D8AE6E66042 - f76af45cf55c25ca"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "(1) suspend resume partial function for BabbageSDK.BabbageSDK.waitForAuthentication() async -&gt; Swift.Bool"
+                  moduleName = "Crypton"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/braydenlangley/Projects/Babbage/crypton-ios/BabbageSDK/Sources/BabbageSDK/BabbageSDK.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "235"
+                  endingLineNumber = "235"
+                  offsetFromSymbolStart = "776">
+               </Location>
+               <Location
+                  uuid = "532E14D3-3FF4-4BDD-B6C8-4D8AE6E66042 - 13ece781f9e455d3"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "(2) await resume partial function for BabbageSDK.BabbageSDK.waitForAuthentication() async -&gt; Swift.Bool"
+                  moduleName = "Crypton"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/braydenlangley/Projects/Babbage/crypton-ios/BabbageSDK/Sources/BabbageSDK/BabbageSDK.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "235"
+                  endingLineNumber = "235"
+                  offsetFromSymbolStart = "48">
+               </Location>
+               <Location
+                  uuid = "532E14D3-3FF4-4BDD-B6C8-4D8AE6E66042 - 39ab39b55dbd65cc"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "(3) suspend resume partial function for BabbageSDK.BabbageSDK.waitForAuthentication() async -&gt; Swift.Bool"
+                  moduleName = "Crypton"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/braydenlangley/Projects/Babbage/crypton-ios/BabbageSDK/Sources/BabbageSDK/BabbageSDK.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "235"
+                  endingLineNumber = "235"
+                  offsetFromSymbolStart = "68">
+               </Location>
+            </Locations>
+         </BreakpointContent>
+      </BreakpointProxy>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
+         <BreakpointContent
+            uuid = "D800C179-261E-40BF-A909-DC3C40C499CE"
+            shouldBeEnabled = "Yes"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            filePath = "BabbageSDK/Sources/BabbageSDK/BabbageSDK.swift"
+            startingColumnNumber = "9223372036854775807"
+            endingColumnNumber = "9223372036854775807"
+            startingLineNumber = "264"
+            endingLineNumber = "264"
+            landmarkName = "runCommand(cmd:)"
+            landmarkType = "7">
+            <Locations>
+               <Location
+                  uuid = "D800C179-261E-40BF-A909-DC3C40C499CE - 6a8297e0a6a2cc2f"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "closure #1 (Swift.String) -&gt; () in closure #1 ((Swift.Result&lt;BabbageSDK.JSON, Swift.Never&gt;) -&gt; ()) -&gt; () in BabbageSDK.BabbageSDK.runCommand(cmd: BabbageSDK.JSON, id: Swift.String) -&gt; Combine.Future&lt;BabbageSDK.JSON, Swift.Never&gt;"
+                  moduleName = "Crypton"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/braydenlangley/Projects/Babbage/crypton-ios/BabbageSDK/Sources/BabbageSDK/BabbageSDK.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "264"
+                  endingLineNumber = "264"
+                  offsetFromSymbolStart = "628">
+               </Location>
+               <Location
+                  uuid = "D800C179-261E-40BF-A909-DC3C40C499CE - 6a8297e0a6a2cc2f"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "closure #1 (Swift.String) -&gt; () in closure #1 ((Swift.Result&lt;BabbageSDK.JSON, Swift.Never&gt;) -&gt; ()) -&gt; () in BabbageSDK.BabbageSDK.runCommand(cmd: BabbageSDK.JSON, id: Swift.String) -&gt; Combine.Future&lt;BabbageSDK.JSON, Swift.Never&gt;"
+                  moduleName = "Crypton"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/braydenlangley/Projects/Babbage/crypton-ios/BabbageSDK/Sources/BabbageSDK/BabbageSDK.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "264"
+                  endingLineNumber = "264"
+                  offsetFromSymbolStart = "860">
+               </Location>
+            </Locations>
+         </BreakpointContent>
+      </BreakpointProxy>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
+         <BreakpointContent
+            uuid = "C58F329A-6611-4012-A4E7-66317F6BBDA9"
+            shouldBeEnabled = "Yes"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            filePath = "BabbageSDK/Sources/BabbageSDK/BabbageSDK.swift"
+            startingColumnNumber = "9223372036854775807"
+            endingColumnNumber = "9223372036854775807"
+            startingLineNumber = "274"
+            endingLineNumber = "274"
+            landmarkName = "runCommand(cmd:id:)"
+            landmarkType = "7">
+         </BreakpointContent>
+      </BreakpointProxy>
+   </Breakpoints>
 </Bucket>
