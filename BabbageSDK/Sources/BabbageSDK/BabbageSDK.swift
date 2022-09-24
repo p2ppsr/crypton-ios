@@ -6,97 +6,31 @@ import GenericJSON
 @available(iOS 13.0, *)
 public class BabbageSDK: UIViewController, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
     
-//    public let webView: WKWebView
-    @IBOutlet var webView: WKWebView!
-    
+    var webView: WKWebView!
     public typealias Callback = (String) -> Void
-    public var callbackIDMap: [String : Callback]
-    
-    // TODO: Move to client app?
-    let PROTOCOL_ID = "crypton"
-    let KEY_ID = "1"
+    public var callbackIDMap: [String : Callback] = [:]
+
     let HADES_BASE_URL = "http://localhost:3000" // https://staging-mobile-portal.babbage.systems
     
-    public required init?(coder: NSCoder) {
-//        self.webView = webView
-        self.callbackIDMap = [:]
-        super.init(coder: coder)
-        
-        
+    public func setParent(parent: UIViewController) {
+        parent.addChild(self)
+        parent.view.addSubview(self.view)
+        self.didMove(toParent: parent)
     }
     
-    // Defines the structure of a BabbageResponse
-//    public struct BabbageResponse: Decodable {
-//        enum Category: String, Decodable {
-//            case swift, combine, debugging, xcode
-//        }
-//
-//        public let type: String
-//        public let result: String
-//        public let id: String
-//
-//        // Initialize the properties
-//        public init(type: String, result: String, id: String){
-//            self.type = type
-//            self.result = result
-//            self.id = id
-//        }
-//    }
-//    public struct BabbageResponseWithArray: Decodable {
-//        public let type: String
-//        public let result: [String]
-//        public let id: String
-//
-//        // Initialize the properties
-//        public init(type: String, result: [String], id: String){
-//            self.type = type
-//            self.result = result
-//            self.id = id
-//        }
-//    }
-    
-    // Test JSON
-//    let json: JSON = [
-//        "num": 1,
-//        "str": "baz",
-//        "bool": true,
-//        "obj": [
-//            "foo": "jar",
-//            "bar": [
-//                "songs":["song1", "song2", "song3"]
-//            ]
-//        ]
-//    ]
-    
- 
-    
-    // Property accessors
-//    let str = json.objectValue?["str"]?.stringValue
-//    let val = json[keyPath: "obj.bar.songs"] // "jar"
-//    print(val![0])
-
-    // Defines the structure of a BabbageCommand
-//    public struct BabbageCommand: Encodable {
-//        public let type: String
-//        public let call: String
-//        public let params: JSON
-//        public var id: String
-//
-//        // Initialize the properties
-//        public init(type: String, call: String, params: [String:String], id: String){
-//            self.type = type
-//            self.call = call
-//            self.params = params
-//            self.id = id
-//        }
-//    }
-//
     public override func loadView() {
-        super.loadView()
+        // Create the webview and set it to the view
+        webView = WKWebView()
+        webView.frame  = CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
+        self.view = webView
+        self.view.isHidden = true
+
         // Do any additional setup after loading the view.
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.customUserAgent = "babbage-webview-inlay"
+        webView.configuration.userContentController.add(self, name: "openBabbage")
+        webView.configuration.userContentController.add(self, name: "closeBabbage")
 
         // Disable zooming on webview
         let source: String = "var meta = document.createElement('meta');" +
@@ -115,14 +49,22 @@ public class BabbageSDK: UIViewController, WKScriptMessageHandler, WKNavigationD
     public override func viewDidLoad() {
         super.viewDidLoad()
     }
+    
+    // Show / Hide the BabbageViewController
+    public func showView() {
+        self.view.fadeIn(0.3, onCompletion: {})
+    }
+    public func hideView() {
+        self.view.fadeOut(0.3, onCompletion: {})
+    }
 
+    // Handle javascript alerts with native swift alerts
     public func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
         let alertController = UIAlertController(title: nil, message: message, preferredStyle: .actionSheet)
         
         alertController.addAction(UIAlertAction(title: "Confirm", style: .destructive, handler: { (action) in
             completionHandler(true)
         }))
-
         alertController.addAction(UIAlertAction(title: "Cancel", style: .default, handler: { (action) in
             completionHandler(false)
         }))
@@ -136,9 +78,9 @@ public class BabbageSDK: UIViewController, WKScriptMessageHandler, WKNavigationD
         guard let response = message.body as? String else { return }
         
         if (message.name == "closeBabbage") {
-              webView.isHidden = true
+            hideView()
         } else if (message.name == "openBabbage") {
-              webView.isHidden = false
+            showView()
         } else {
             callbackIDMap[message.name]!(response)
         }
@@ -148,114 +90,129 @@ public class BabbageSDK: UIViewController, WKScriptMessageHandler, WKNavigationD
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
       // This function is called when the webview finishes navigating to the webpage.
       // We use this to send data to the webview when it's loaded.
-//        print("loaded")
-//        let id:String = (generateCallbackID())
-//        webView.configuration.userContentController.add(self, name: id)
-//
         Task.init {
             if #available(iOS 15.0, *) {
-//                let isAuthenticated:Bool? = await isAuthenticated(id: id)
-//
-//                // Show/Hide the webview
-//                if (isAuthenticated!) {
-//                    webView.isHidden = true
-////                    performSegue(withIdentifier: "showApp", sender: self)
-//                } else {
-//                    webView.isHidden = false
-//                    let id:String = (generateCallbackID())
-//                    webView.configuration.userContentController.add(self, name: id)
-                    await waitForAuthentication()
-//                    webView.isHidden = true
-//                }
-//            } else {
-//                // Fallback on earlier versions
+                let isAuthenticated:Bool? = await isAuthenticated()
+
+                // Show/Hide the view
+                if (isAuthenticated!) {
+                    hideView()
+                } else {
+                    showView()
+                    _ = await waitForAuthentication()
+                    hideView()
+                }
+            } else {
+                // Fallback on earlier versions
             }
         }
     }
+    
+    // Helper function which returns a JSON type string
+    func formatString(param: String) -> JSON {
+        return try! JSON(param)
+    }
 
     // Encrypts data using CWI.encrypt
-//    @available(iOS 15.0, *)
-//    public func encrypt(plaintext: String, protocolID: String, keyID: String) async -> String {
-////        let cmd = BabbageCommand(type: "CWI", call: "encrypt", params: ["plaintext": plaintext, "protocolID": protocolID, "keyID": keyID, "originator": "projectbabbage.com", "returnType": "string"], id: "")
-//
-//        struct EncryptedText: Decodable {
-//            let result: String
-//        }
-//
-//        let result: String = await runCommand(webView: webView, cmd: cmd).value
-//        let encryptedText = try! JSONDecoder().decode(EncryptedText.self, from:result.data(using: .utf8)!)
-//
-//        return encryptedText.result
-//    }
+    @available(iOS 15.0, *)
+    public func encrypt(plaintext: String, protocolID: String, keyID: String) async -> String {
+        
+        // Convert the string to a base64 string
+        let utf8str = plaintext.data(using: .utf8)
+        let base64Encoded = utf8str?.base64EncodedString(options: Data.Base64EncodingOptions(rawValue: 0))
+        
+        // Construct the expected command to send
+        var cmd:JSON = [
+            "type":"CWI",
+            "call":"encrypt",
+            "params": [
+                "plaintext": formatString(param: base64Encoded!),
+                "protocolID": formatString(param: protocolID),
+                "keyID": formatString(param: keyID),
+                "returnType": "string"
+            ]
+        ]
+        
+        // Run the command and get the response JSON object
+        let responseObject = await runCommand(cmd: &cmd).value
+        
+        // Pull out the expect result string
+        let encryptedText:String = (responseObject.objectValue?["result"]?.stringValue)!
+        return encryptedText
+    }
 
     // Encrypts data using CWI.decrypt
-//    @available(iOS 15.0, *)
-//    public func decrypt(ciphertext: String, protocolID: String, keyID: String, id: String) async -> String {
-//        let cmd = BabbageCommand(type: "CWI", call: "decrypt", params: ["ciphertext": ciphertext, "protocolID": protocolID, "keyID": keyID, "originator": "projectbabbage.com", "returnType": "string"], id: id)
-//
-//        struct DecryptedText: Decodable {
-//            let result: String
-//        }
-//
-//        let result: String = await runCommand(webView: webView, cmd: cmd).value
-//        let decryptedText = try! JSONDecoder().decode(DecryptedText.self, from:result.data(using: .utf8)!)
-//        return decryptedText.result
-//    }
+    @available(iOS 15.0, *)
+    public func decrypt(ciphertext: String, protocolID: String, keyID: String) async -> String {
+        // Construct the expected command to send
+        var cmd:JSON = [
+            "type":"CWI",
+            "call":"decrypt",
+            "params": [
+                "ciphertext": formatString(param: ciphertext),
+                "protocolID": formatString(param: protocolID),
+                "keyID": formatString(param: keyID),
+                "returnType": "string"
+            ]
+        ]
+        
+        // Run the command and get the response JSON object
+        let responseObject = await runCommand(cmd: &cmd).value
+        
+        // Pull out the expect result string
+        let decryptedText:String = (responseObject.objectValue?["result"]?.stringValue)!
+        return decryptedText
+    }
     
-//    @available(iOS 15.0, *)
-//    public func isAuthenticated(id: String) async -> Bool {
-//        struct ResponseObject: Decodable {
-//            let result:Bool
-//        }
-//
-//        let cmd = BabbageCommand(type: "CWI", call:"isAuthenticated", params: [:], id: id)
-//        let result = await runCommand(webView: webView, cmd: cmd).value
-//        let responseObject:ResponseObject = try! JSONDecoder().decode(ResponseObject.self, from:result.data(using: .utf8)!)
-//        let authenticationStatus:Bool = responseObject.result
-//        return authenticationStatus
-//    }
+    @available(iOS 15.0, *)
+    public func isAuthenticated() async -> Bool {
+        // Construct the expected command to send
+        var cmd:JSON = [
+            "type":"CWI",
+            "call":"isAuthenticated",
+            "params": []
+        ]
+        
+        // Run the command and get the response JSON object
+        let responseObject = await runCommand(cmd: &cmd).value
+        
+        // Pull out the expect result string
+        let str:String = try! String(data: JSONEncoder().encode(responseObject.result), encoding: .utf8)!
+        // Convert string to boolean and return
+        let result =  (str as NSString).boolValue
+        return result
+    }
     
     @available(iOS 15.0, *)
     public func waitForAuthentication() async -> Bool {
-//        struct ResponseObject: Decodable {
-//            let result:Bool
-//        }
-        
-//        let cmd = BabbageCommand(type: "CWI", call:"waitForAuthentication", params: [:], id: id)
-        let id:String = generateCallbackID()
-        let callbackID:JSON = try! JSON(id)
-        
-        let cmd:JSON = [
+        // Construct the expected command to send
+        var cmd:JSON = [
             "type":"CWI",
             "call":"waitForAuthentication",
-            "params": [],
-            "id":callbackID
+            "params": []
         ]
         
-        let result = await runCommand(cmd: cmd, id: id).value
-//        let responseObject:ResponseObject = try! JSONDecoder().decode(ResponseObject.self, from:result.data(using: .utf8)!)
-//        let authenticationStatus:Bool = responseObject.result
-        return true
-    }
-    
-    public func generateCallbackID() -> String {
-        return NSUUID().uuidString
+        // Run the command and get the response JSON object
+        let responseObject = await runCommand(cmd: &cmd).value
+        
+        // Pull out the expect result string
+        let str:String = try! String(data: JSONEncoder().encode(responseObject.result), encoding: .utf8)!
+        // Convert string to boolean and return
+        let result =  (str as NSString).boolValue
+        return result
     }
 
     // Execute the BabbageCommand
-    public func runCommand(cmd: JSON, id: String)-> Combine.Future <JSON, Never> {
-//        let callbackID:String = generateCallbackID()
+    public func runCommand(cmd: inout JSON)-> Combine.Future <JSON, Never> {
+        // Generate a callbackID
+        let id:String = NSUUID().uuidString
         webView.configuration.userContentController.add(self, name: id)
         
-        // Set the callbackID on the command
-//        struct callbackIdObject: Codable {
-//            let id: String
-//        }
-//
-//        let val:JSON = try! JSON(encodable: callbackIdObject(id: callbackID))
-//
-////        var cmdID = try JSONEncoder().encode(test)
-//        var cmdToExecute = cmd.merging(with: val)
+        let callbackID:JSON = [
+            "id":  try! JSON(id)
+        ]
+        // Update the cmd to contain the new callback id
+        cmd = cmd.merging(with: callbackID)
 
         let result = Future<JSON, Never>() { promise in
             let callback: Callback = { response in
@@ -282,4 +239,29 @@ public class BabbageSDK: UIViewController, WKScriptMessageHandler, WKNavigationD
         }
         return result
     }
+}
+
+// Animate views in and out --> https://stackoverflow.com/questions/44198487/animating-uiview-ishidden-subviews
+extension UIView {
+    func fadeIn(_ duration: TimeInterval? = 0.2, onCompletion: (() -> Void)? = nil) {
+        self.alpha = 0
+        self.isHidden = false
+        UIView.animate(withDuration: duration!,
+                       animations: { self.alpha = 1 },
+                       completion: { (value: Bool) in
+            if let complete = onCompletion { complete() }
+        }
+        )
+    }
+    
+    func fadeOut(_ duration: TimeInterval? = 0.2, onCompletion: (() -> Void)? = nil) {
+        UIView.animate(withDuration: duration!,
+                       animations: { self.alpha = 0 },
+                       completion: { (value: Bool) in
+            self.isHidden = true
+            if let complete = onCompletion { complete() }
+        }
+        )
+    }
+    
 }

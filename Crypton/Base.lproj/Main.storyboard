@@ -59,7 +59,7 @@
                                     <backgroundConfiguration key="background" image="BabbageIcon" imageContentMode="scaleAspectFit"/>
                                 </buttonConfiguration>
                                 <connections>
-                                    <action selector="toggleWebview:" destination="BYZ-38-t0r" eventType="touchUpInside" id="i83-Qu-agw"/>
+                                    <action selector="showWebView:" destination="BYZ-38-t0r" eventType="touchUpInside" id="eW7-JF-WEx"/>
                                 </connections>
                             </button>
                             <button opaque="NO" contentMode="scaleToFill" contentHorizontalAlignment="center" contentVerticalAlignment="center" buttonType="system" lineBreakMode="middleTruncation" translatesAutoresizingMaskIntoConstraints="NO" id="Oj8-5b-vq3">
@@ -144,54 +144,12 @@
                     </view>
                     <navigationItem key="navigationItem" id="Pse-TN-Ks5"/>
                     <connections>
-                        <outlet property="showHideBtn" destination="x6l-Xk-fOj" id="ncd-m9-8gq"/>
                         <outlet property="textView" destination="h18-6Y-IbB" id="x3V-JI-vEg"/>
                     </connections>
                 </viewController>
                 <placeholder placeholderIdentifier="IBFirstResponder" id="dkx-z0-nzr" sceneMemberID="firstResponder"/>
             </objects>
-            <point key="canvasLocation" x="-3347" y="-487"/>
-        </scene>
-        <!--BabbageSDK-->
-        <scene sceneID="Zi2-kM-OyB">
-            <objects>
-                <viewController storyboardIdentifier="babbageViewController" id="i8r-PF-BNF" customClass="BabbageSDK" customModule="BabbageSDK" sceneMemberID="viewController">
-                    <view key="view" contentMode="scaleToFill" id="Jty-lq-60c">
-                        <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
-                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
-                        <subviews>
-                            <textField opaque="NO" contentMode="scaleToFill" horizontalHuggingPriority="248" fixedFrame="YES" contentHorizontalAlignment="left" contentVerticalAlignment="center" borderStyle="roundedRect" textAlignment="natural" minimumFontSize="17" translatesAutoresizingMaskIntoConstraints="NO" id="y30-do-IMI">
-                                <rect key="frame" x="80" y="201" width="97" height="34"/>
-                                <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMaxY="YES"/>
-                                <fontDescription key="fontDescription" type="system" pointSize="14"/>
-                                <textInputTraits key="textInputTraits"/>
-                            </textField>
-                            <wkWebView contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="U6z-lU-t8h">
-                                <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
-                                <color key="backgroundColor" red="0.36078431370000003" green="0.38823529410000002" blue="0.4039215686" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
-                                <wkWebViewConfiguration key="configuration">
-                                    <audiovisualMediaTypes key="mediaTypesRequiringUserActionForPlayback" none="YES"/>
-                                    <wkPreferences key="preferences"/>
-                                </wkWebViewConfiguration>
-                            </wkWebView>
-                        </subviews>
-                        <viewLayoutGuide key="safeArea" id="4v6-Oh-akJ"/>
-                        <color key="backgroundColor" red="0.28259502190000002" green="0.28539299239999999" blue="0.28539299239999999" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
-                        <constraints>
-                            <constraint firstItem="U6z-lU-t8h" firstAttribute="top" secondItem="Jty-lq-60c" secondAttribute="topMargin" constant="-59" id="9aT-wt-h7C"/>
-                            <constraint firstItem="U6z-lU-t8h" firstAttribute="centerX" secondItem="Jty-lq-60c" secondAttribute="centerX" id="OLJ-sI-MEA"/>
-                            <constraint firstItem="U6z-lU-t8h" firstAttribute="leading" secondItem="4v6-Oh-akJ" secondAttribute="leading" id="WPt-qB-4EB"/>
-                            <constraint firstItem="U6z-lU-t8h" firstAttribute="centerY" secondItem="Jty-lq-60c" secondAttribute="centerY" id="f4X-dk-oNp"/>
-                        </constraints>
-                    </view>
-                    <navigationItem key="navigationItem" id="xkk-ya-beA"/>
-                    <connections>
-                        <outlet property="webView" destination="U6z-lU-t8h" id="0YE-Xt-Ya8"/>
-                    </connections>
-                </viewController>
-                <placeholder placeholderIdentifier="IBFirstResponder" id="Udy-va-MXb" sceneMemberID="firstResponder"/>
-            </objects>
-            <point key="canvasLocation" x="-2422" y="-487"/>
+            <point key="canvasLocation" x="-2651" y="-508"/>
         </scene>
     </scenes>
     <resources>
