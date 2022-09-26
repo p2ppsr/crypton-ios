@@ -16,7 +16,7 @@ class ViewController: UIViewController {
     let PROTOCOL_ID = "crypton"
     let KEY_ID = "1"
     // This should be a shared instance for all view controllers and passed around via segues
-    var sdk:BabbageSDK = BabbageSDK()
+    var sdk:BabbageSDK = BabbageSDK(webviewStartURL: "https://staging-mobile-portal.babbage.systems")
 
     override func viewDidLoad() {
         super.viewDidLoad()
