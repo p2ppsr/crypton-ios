@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		406EF99328E26B4900FAB3DD /* BabbageSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 406EF99228E26B4900FAB3DD /* BabbageSDK */; };
 		406FFD0F28DD23F2005173B4 /* OldVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 406FFD0E28DD23F2005173B4 /* OldVC.swift */; };
-		4096A00D28DE02AD00D7CC06 /* BabbageSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 4096A00C28DE02AD00D7CC06 /* BabbageSDK */; };
 		40D664A228D8EA6200CD67A8 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D664A128D8EA6200CD67A8 /* AppDelegate.swift */; };
 		40D664A428D8EA6200CD67A8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D664A328D8EA6200CD67A8 /* SceneDelegate.swift */; };
 		40D664A628D8EA6200CD67A8 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D664A528D8EA6200CD67A8 /* ViewController.swift */; };
@@ -39,8 +39,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		406EF99428E26B6200FAB3DD /* babbage-sdk-ios */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = "babbage-sdk-ios"; path = "../babbage-sdk-ios"; sourceTree = "<group>"; };
 		406FFD0E28DD23F2005173B4 /* OldVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OldVC.swift; sourceTree = "<group>"; };
-		4096A00B28DE027000D7CC06 /* BabbageSDK */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = BabbageSDK; sourceTree = "<group>"; };
 		40D6649E28D8EA6200CD67A8 /* Crypton.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Crypton.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		40D664A128D8EA6200CD67A8 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		40D664A328D8EA6200CD67A8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
@@ -62,7 +62,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				4096A00D28DE02AD00D7CC06 /* BabbageSDK in Frameworks */,
+				406EF99328E26B4900FAB3DD /* BabbageSDK in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -83,10 +83,10 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		40869F0928DA37F300E0E8D5 /* Packages */ = {
+		406EF98F28E26ADE00FAB3DD /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				4096A00B28DE027000D7CC06 /* BabbageSDK */,
+				406EF99428E26B6200FAB3DD /* babbage-sdk-ios */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -101,8 +101,8 @@
 		40D6649528D8EA6200CD67A8 = {
 			isa = PBXGroup;
 			children = (
+				406EF98F28E26ADE00FAB3DD /* Packages */,
 				406FFD0E28DD23F2005173B4 /* OldVC.swift */,
-				40869F0928DA37F300E0E8D5 /* Packages */,
 				40D664A028D8EA6200CD67A8 /* Crypton */,
 				40D664BA28D8EA6300CD67A8 /* CryptonTests */,
 				40D664C428D8EA6300CD67A8 /* CryptonUITests */,
@@ -170,7 +170,7 @@
 			);
 			name = Crypton;
 			packageProductDependencies = (
-				4096A00C28DE02AD00D7CC06 /* BabbageSDK */,
+				406EF99228E26B4900FAB3DD /* BabbageSDK */,
 			);
 			productName = UITest;
 			productReference = 40D6649E28D8EA6200CD67A8 /* Crypton.app */;
@@ -244,6 +244,8 @@
 				Base,
 			);
 			mainGroup = 40D6649528D8EA6200CD67A8;
+			packageReferences = (
+			);
 			productRefGroup = 40D6649F28D8EA6200CD67A8 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -639,7 +641,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		4096A00C28DE02AD00D7CC06 /* BabbageSDK */ = {
+		406EF99228E26B4900FAB3DD /* BabbageSDK */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BabbageSDK;
 		};

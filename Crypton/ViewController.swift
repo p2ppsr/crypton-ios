@@ -8,7 +8,6 @@
 import UIKit
 import WebKit
 import BabbageSDK
-import GenericJSON
 
 // Controller responsible for handling interactions on the main view
 class ViewController: UIViewController {
@@ -22,6 +21,9 @@ class ViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         sdk.setParent(parent: self)
+        
+        let tap = UITapGestureRecognizer(target: view, action: #selector(UIView.endEditing))
+        view.addGestureRecognizer(tap)
     }
     
     // Show/hide the Babbage Desktop webview
