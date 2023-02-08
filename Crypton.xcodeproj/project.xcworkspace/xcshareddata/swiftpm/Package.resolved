@@ -1,15 +1,6 @@
 {
   "pins" : [
     {
-      "identity" : "babbage-sdk-ios",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/p2ppsr/babbage-sdk-ios",
-      "state" : {
-        "branch" : "master",
-        "revision" : "4a4cfadedb243a95596362cde53c78071490ff38"
-      }
-    },
-    {
       "identity" : "generic-json-swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/iwill/generic-json-swift.git",
