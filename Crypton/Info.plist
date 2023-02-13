@@ -5,20 +5,7 @@
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSExceptionDomains</key>
-		<dict>
-			<key>127.0.0.1:3000</key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-				<key>NSIncludesSubdomains</key>
-				<true/>
-			</dict>
-			<key>localhost:port</key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-			</dict>
-		</dict>
+		<dict/>
 	</dict>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

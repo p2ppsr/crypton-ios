@@ -6,8 +6,9 @@
 //
 
 import UIKit
+import AVFoundation
 
-public protocol ImagePickerDelegate: class {
+public protocol ImagePickerDelegate: AnyObject {
     func didSelect(image: UIImage?)
 }
 
@@ -16,6 +17,8 @@ open class ImagePicker: NSObject {
     private let pickerController: UIImagePickerController
     private weak var presentationController: UIViewController?
     private weak var delegate: ImagePickerDelegate?
+    
+    private var captureSession: AVCaptureSession?
 
     public init(presentationController: UIViewController, delegate: ImagePickerDelegate) {
         self.pickerController = UIImagePickerController()
@@ -45,15 +48,28 @@ open class ImagePicker: NSObject {
 
         let alertController = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
 
-        if let action = self.action(for: .camera, title: "Take photo") {
-            alertController.addAction(action)
+        // Note: This code could be improved with a shared class between encryptor and decryptor!
+        var scanAction:UIAlertAction
+        if (presentationController?.restorationIdentifier == "encryptorVC") {
+            scanAction = UIAlertAction(title: "Scan QR Code", style: .default, handler: {_ in
+                (self.presentationController as! EncryptorVC).captureSession?.startRunning()
+                (self.presentationController as! EncryptorVC).qrScannerView.isHidden = false
+            })
+        } else {
+            scanAction = UIAlertAction(title: "Scan QR Code", style: .default, handler: {_ in
+                (self.presentationController as! Decryptor).captureSession?.startRunning()
+                (self.presentationController as! Decryptor).qrScannerView.isHidden = false
+            })
         }
+        alertController.addAction(scanAction)
+        
         if let action = self.action(for: .savedPhotosAlbum, title: "Camera roll") {
             alertController.addAction(action)
         }
         if let action = self.action(for: .photoLibrary, title: "Photo library") {
             alertController.addAction(action)
         }
+        
 
         alertController.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: nil))
 

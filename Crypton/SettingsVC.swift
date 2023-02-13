@@ -1,34 +1,27 @@
 //
-//  ResultsVC.swift
+//  SettingsVC.swift
 //  Crypton
 //
-//  Created by Brayden Langley on 2/9/23.
+//  Created by Brayden Langley on 2/13/23.
 //
 
 import Foundation
 import UIKit
-import BabbageSDK
-import GenericJSON
 
-class ResultsVC: UIViewController {
-    
-    let PROTOCOL_ID = "crypton"
-    let KEY_ID = "1"
-    var sdk:BabbageSDK = BabbageSDK(webviewStartURL: "https://staging-mobile-portal.babbage.systems")
-    
-    @IBOutlet var qrCodeImageView: UIImageView!
-    var secureQRCode: UIImage?
+class SettingsVC: UIViewController {
+
+    @IBOutlet var identityKeyImageView: UIImageView!
+    var identityKey: String?
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        sdk.setParent(parent: self)
-        qrCodeImageView.image = secureQRCode
-        
+        // Get the identityKey which should be initialized by the mainVC
+        identityKeyImageView.image = generateQRCode(from: identityKey ?? "", centerImage: UIImage(named: "userIcon"), color: "CryptonGreen")
     }
     
-    @IBAction func share(_ sender: UIButton) {
+    @IBAction func shareButton(_ sender: Any) {
         // Set up activity view controller
-        let activityViewController = UIActivityViewController(activityItems: [secureQRCode!], applicationActivities: nil)
+        let activityViewController = UIActivityViewController(activityItems: [identityKeyImageView.image!], applicationActivities: nil)
         activityViewController.isModalInPresentation = true
         activityViewController.popoverPresentationController?.sourceView = self.view // so that iPads won't crash
 
@@ -39,16 +32,12 @@ class ResultsVC: UIViewController {
         activityViewController.completionWithItemsHandler = { (activityType, completed, returnedItems, error) in
             if completed {
                 // Create a new alert
-                let dialogMessage = UIAlertController(title: "Shared", message: "Encrypted message shared!", preferredStyle: .alert)
+                let dialogMessage = UIAlertController(title: "Shared", message: "IdentityKey shared!", preferredStyle: .alert)
                 dialogMessage.addAction(UIAlertAction(title: "OK", style: .default, handler: { (action) -> Void in
                  }))
                 // Present alert to user
                 self.present(dialogMessage, animated: true, completion: nil)
             }
         }
-    }
-    
-    @IBAction func done(_ sender: UIButton) {
-        self.navigationController?.popToRootViewController(animated: true)
     }
 }

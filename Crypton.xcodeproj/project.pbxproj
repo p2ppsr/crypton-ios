@@ -7,13 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		4036BAD0299A8EB400C494E2 /* QRHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4036BACF299A8EB400C494E2 /* QRHelper.swift */; };
+		40707AD7299AC26500DF14D0 /* SettingsVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40707AD6299AC26500DF14D0 /* SettingsVC.swift */; };
+		40707AD9299AC91500DF14D0 /* PlaceholderTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */; };
 		40A8F3F928E4DEB5009642D9 /* BabbageSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 40A8F3F828E4DEB5009642D9 /* BabbageSDK */; };
 		40C1731A2995A2320003D482 /* EncryptorVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40C173192995A2320003D482 /* EncryptorVC.swift */; };
-		40C1731C2995A5AB0003D482 /* DecryptorVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40C1731B2995A5AB0003D482 /* DecryptorVC.swift */; };
 		40C1731E2995A9760003D482 /* ResultsVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40C1731D2995A9760003D482 /* ResultsVC.swift */; };
+		40C17320299699A80003D482 /* MainVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40C1731F299699A80003D482 /* MainVC.swift */; };
+		40C1732229969C4A0003D482 /* Decryptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40C1732129969C4A0003D482 /* Decryptor.swift */; };
 		40D664A228D8EA6200CD67A8 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D664A128D8EA6200CD67A8 /* AppDelegate.swift */; };
 		40D664A428D8EA6200CD67A8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D664A328D8EA6200CD67A8 /* SceneDelegate.swift */; };
-		40D664A628D8EA6200CD67A8 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D664A528D8EA6200CD67A8 /* ViewController.swift */; };
 		40D664A928D8EA6200CD67A8 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 40D664A728D8EA6200CD67A8 /* Main.storyboard */; };
 		40D664AC28D8EA6200CD67A8 /* UITest.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = 40D664AA28D8EA6200CD67A8 /* UITest.xcdatamodeld */; };
 		40D664AE28D8EA6300CD67A8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 40D664AD28D8EA6300CD67A8 /* Assets.xcassets */; };
@@ -44,14 +47,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		4036BACF299A8EB400C494E2 /* QRHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRHelper.swift; sourceTree = "<group>"; };
+		40707AD6299AC26500DF14D0 /* SettingsVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsVC.swift; sourceTree = "<group>"; };
+		40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderTextView.swift; sourceTree = "<group>"; };
 		4087C9D8299439C000B116B3 /* babbage-sdk-ios */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = "babbage-sdk-ios"; path = "../babbage-sdk-ios"; sourceTree = "<group>"; };
 		40C173192995A2320003D482 /* EncryptorVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EncryptorVC.swift; sourceTree = "<group>"; };
-		40C1731B2995A5AB0003D482 /* DecryptorVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecryptorVC.swift; sourceTree = "<group>"; };
 		40C1731D2995A9760003D482 /* ResultsVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsVC.swift; sourceTree = "<group>"; };
+		40C1731F299699A80003D482 /* MainVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainVC.swift; sourceTree = "<group>"; };
+		40C1732129969C4A0003D482 /* Decryptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Decryptor.swift; sourceTree = "<group>"; };
 		40D6649E28D8EA6200CD67A8 /* Crypton.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Crypton.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		40D664A128D8EA6200CD67A8 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		40D664A328D8EA6200CD67A8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
-		40D664A528D8EA6200CD67A8 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
 		40D664A828D8EA6200CD67A8 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		40D664AB28D8EA6200CD67A8 /* UITest.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = UITest.xcdatamodel; sourceTree = "<group>"; };
 		40D664AD28D8EA6300CD67A8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -135,7 +141,6 @@
 			children = (
 				40D664A128D8EA6200CD67A8 /* AppDelegate.swift */,
 				40D664A328D8EA6200CD67A8 /* SceneDelegate.swift */,
-				40D664A528D8EA6200CD67A8 /* ViewController.swift */,
 				40D664A728D8EA6200CD67A8 /* Main.storyboard */,
 				40D664AD28D8EA6300CD67A8 /* Assets.xcassets */,
 				40D664AF28D8EA6300CD67A8 /* LaunchScreen.storyboard */,
@@ -144,8 +149,12 @@
 				40ECDDDC299481D700BBCF97 /* ReferenceCode.swift */,
 				40ECDDDE2994827200BBCF97 /* ImagePicker.swift */,
 				40C173192995A2320003D482 /* EncryptorVC.swift */,
-				40C1731B2995A5AB0003D482 /* DecryptorVC.swift */,
 				40C1731D2995A9760003D482 /* ResultsVC.swift */,
+				40C1731F299699A80003D482 /* MainVC.swift */,
+				40C1732129969C4A0003D482 /* Decryptor.swift */,
+				4036BACF299A8EB400C494E2 /* QRHelper.swift */,
+				40707AD6299AC26500DF14D0 /* SettingsVC.swift */,
+				40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */,
 			);
 			path = Crypton;
 			sourceTree = "<group>";
@@ -305,15 +314,18 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				40D664A628D8EA6200CD67A8 /* ViewController.swift in Sources */,
+				40707AD7299AC26500DF14D0 /* SettingsVC.swift in Sources */,
+				4036BAD0299A8EB400C494E2 /* QRHelper.swift in Sources */,
+				40C17320299699A80003D482 /* MainVC.swift in Sources */,
 				40C1731E2995A9760003D482 /* ResultsVC.swift in Sources */,
-				40C1731C2995A5AB0003D482 /* DecryptorVC.swift in Sources */,
 				40C1731A2995A2320003D482 /* EncryptorVC.swift in Sources */,
 				40D664AC28D8EA6200CD67A8 /* UITest.xcdatamodeld in Sources */,
+				40C1732229969C4A0003D482 /* Decryptor.swift in Sources */,
 				40ECDDDD299481D700BBCF97 /* ReferenceCode.swift in Sources */,
 				40ECDDDF2994827200BBCF97 /* ImagePicker.swift in Sources */,
 				40D664A228D8EA6200CD67A8 /* AppDelegate.swift in Sources */,
 				40D664A428D8EA6200CD67A8 /* SceneDelegate.swift in Sources */,
+				40707AD9299AC91500DF14D0 /* PlaceholderTextView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -486,21 +498,23 @@
 		40D664CC28D8EA6300CD67A8 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon2;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon4;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 493LGNZ6YT;
+				DEVELOPMENT_TEAM = 3YQ69SSGVS;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Crypton/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Crypton;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera required to scan QR code";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Access needed to save QR code";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen.storyboard;
 				INFOPLIST_KEY_UIMainStoryboardFile = Main;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -518,21 +532,23 @@
 		40D664CD28D8EA6300CD67A8 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon2;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon4;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 493LGNZ6YT;
+				DEVELOPMENT_TEAM = 3YQ69SSGVS;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Crypton/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Crypton;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera required to scan QR code";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Access needed to save QR code";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen.storyboard;
 				INFOPLIST_KEY_UIMainStoryboardFile = Main;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
