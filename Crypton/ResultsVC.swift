@@ -14,7 +14,7 @@ class ResultsVC: UIViewController {
     
     let PROTOCOL_ID = "crypton"
     let KEY_ID = "1"
-    var sdk:BabbageSDK = BabbageSDK(webviewStartURL: "https://staging-mobile-portal.babbage.systems")
+    var sdk:BabbageSDK = BabbageSDK(webviewStartURL: "https:/mobile-portal.babbage.systems")
     
     @IBOutlet var qrCodeImageView: UIImageView!
     var secureQRCode: UIImage?

@@ -12,7 +12,7 @@ import BabbageSDK
 class MainVC: UIViewController {
     let PROTOCOL_ID = "crypton"
     let KEY_ID = "1"
-    var sdk:BabbageSDK = BabbageSDK(webviewStartURL: "https://staging-mobile-portal.babbage.systems")
+    var sdk:BabbageSDK = BabbageSDK(webviewStartURL: "https://mobile-portal.babbage.systems")
     var identityKey:String?
     
     @IBAction func getInfo(_ sender: Any) {
@@ -36,5 +36,16 @@ class MainVC: UIViewController {
     }
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+    }
+    
+    override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
+        guard let vc = segue.destination as? CryptoVC else { return }
+        if let button = sender as? UIButton {
+            if (button.tag == 0){
+                vc.action = "Encrypt"
+            } else {
+                vc.action = "Decrypt"
+            }
+        }
     }
 }

@@ -49,18 +49,10 @@ open class ImagePicker: NSObject {
         let alertController = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
 
         // Note: This code could be improved with a shared class between encryptor and decryptor!
-        var scanAction:UIAlertAction
-        if (presentationController?.restorationIdentifier == "encryptorVC") {
-            scanAction = UIAlertAction(title: "Scan QR Code", style: .default, handler: {_ in
-                (self.presentationController as! EncryptorVC).captureSession?.startRunning()
-                (self.presentationController as! EncryptorVC).qrScannerView.isHidden = false
-            })
-        } else {
-            scanAction = UIAlertAction(title: "Scan QR Code", style: .default, handler: {_ in
-                (self.presentationController as! Decryptor).captureSession?.startRunning()
-                (self.presentationController as! Decryptor).qrScannerView.isHidden = false
-            })
-        }
+        var scanAction = UIAlertAction(title: "Scan QR Code", style: .default, handler: {_ in
+            (self.presentationController as! CryptoVC).captureSession?.startRunning()
+            (self.presentationController as! CryptoVC).qrScannerView.isHidden = false
+        })
         alertController.addAction(scanAction)
         
         if let action = self.action(for: .savedPhotosAlbum, title: "Camera roll") {
@@ -84,7 +76,7 @@ open class ImagePicker: NSObject {
 
     private func pickerController(_ controller: UIImagePickerController, didSelect image: UIImage?) {
         controller.dismiss(animated: true, completion: nil)
-
+        controller.view?.endEditing(true)
         self.delegate?.didSelect(image: image)
     }
 }

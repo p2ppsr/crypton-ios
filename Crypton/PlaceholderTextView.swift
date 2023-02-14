@@ -10,13 +10,12 @@ import UIKit
 
 class PlaceholderTextView: UITextView {
     
-    let placeholder: String = "Enter the text you'd like to encrypt"
+    var placeholder: String = "Enter the text, or scan the QR code, that you would like to encrypt or decrypt!"
     
     init(placeholder: String) {
         super.init(frame: .zero, textContainer: nil)
         self.text = placeholder
         self.textColor = .lightGray
-//        self.font = .systemFont(ofSize: 14)
         self.delegate = self
     }
     
@@ -24,20 +23,15 @@ class PlaceholderTextView: UITextView {
         super.init(coder: coder)
         self.text = placeholder
         self.textColor = .lightGray
-//        self.font = .systemFont(ofSize: 14)
         self.delegate = self
-        
-        // Setup a tap gesture for dynamically dismissing the keybaord
-        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
-        tapGesture.cancelsTouchesInView = false
-        self.addGestureRecognizer(tapGesture)
     }
     
     // Dismiss the keyboard only if the textField is first responder.
     @objc func handleTap(sender: UITapGestureRecognizer) {
         if self.isFirstResponder {
-            self.resignFirstResponder()
+            self.superview?.endEditing(true)
         } else {
+            self.superview?.endEditing(true)
             self.becomeFirstResponder()
         }
     }

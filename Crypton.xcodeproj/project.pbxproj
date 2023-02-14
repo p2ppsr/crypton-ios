@@ -8,13 +8,14 @@
 
 /* Begin PBXBuildFile section */
 		4036BAD0299A8EB400C494E2 /* QRHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4036BACF299A8EB400C494E2 /* QRHelper.swift */; };
+		406D8BA5299B4E8800C8B04B /* PageController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 406D8BA4299B4E8800C8B04B /* PageController.swift */; };
+		406D8BAB299B605200C8B04B /* GuidePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 406D8BAA299B605200C8B04B /* GuidePage.swift */; };
 		40707AD7299AC26500DF14D0 /* SettingsVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40707AD6299AC26500DF14D0 /* SettingsVC.swift */; };
 		40707AD9299AC91500DF14D0 /* PlaceholderTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */; };
+		40707ADB299B02BA00DF14D0 /* CryptoVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40707ADA299B02BA00DF14D0 /* CryptoVC.swift */; };
 		40A8F3F928E4DEB5009642D9 /* BabbageSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 40A8F3F828E4DEB5009642D9 /* BabbageSDK */; };
-		40C1731A2995A2320003D482 /* EncryptorVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40C173192995A2320003D482 /* EncryptorVC.swift */; };
 		40C1731E2995A9760003D482 /* ResultsVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40C1731D2995A9760003D482 /* ResultsVC.swift */; };
 		40C17320299699A80003D482 /* MainVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40C1731F299699A80003D482 /* MainVC.swift */; };
-		40C1732229969C4A0003D482 /* Decryptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40C1732129969C4A0003D482 /* Decryptor.swift */; };
 		40D664A228D8EA6200CD67A8 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D664A128D8EA6200CD67A8 /* AppDelegate.swift */; };
 		40D664A428D8EA6200CD67A8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D664A328D8EA6200CD67A8 /* SceneDelegate.swift */; };
 		40D664A928D8EA6200CD67A8 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 40D664A728D8EA6200CD67A8 /* Main.storyboard */; };
@@ -48,13 +49,14 @@
 
 /* Begin PBXFileReference section */
 		4036BACF299A8EB400C494E2 /* QRHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRHelper.swift; sourceTree = "<group>"; };
+		406D8BA4299B4E8800C8B04B /* PageController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageController.swift; sourceTree = "<group>"; };
+		406D8BAA299B605200C8B04B /* GuidePage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuidePage.swift; sourceTree = "<group>"; };
 		40707AD6299AC26500DF14D0 /* SettingsVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsVC.swift; sourceTree = "<group>"; };
 		40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderTextView.swift; sourceTree = "<group>"; };
+		40707ADA299B02BA00DF14D0 /* CryptoVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoVC.swift; sourceTree = "<group>"; };
 		4087C9D8299439C000B116B3 /* babbage-sdk-ios */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = "babbage-sdk-ios"; path = "../babbage-sdk-ios"; sourceTree = "<group>"; };
-		40C173192995A2320003D482 /* EncryptorVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EncryptorVC.swift; sourceTree = "<group>"; };
 		40C1731D2995A9760003D482 /* ResultsVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsVC.swift; sourceTree = "<group>"; };
 		40C1731F299699A80003D482 /* MainVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainVC.swift; sourceTree = "<group>"; };
-		40C1732129969C4A0003D482 /* Decryptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Decryptor.swift; sourceTree = "<group>"; };
 		40D6649E28D8EA6200CD67A8 /* Crypton.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Crypton.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		40D664A128D8EA6200CD67A8 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		40D664A328D8EA6200CD67A8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
@@ -148,13 +150,14 @@
 				40D664AA28D8EA6200CD67A8 /* UITest.xcdatamodeld */,
 				40ECDDDC299481D700BBCF97 /* ReferenceCode.swift */,
 				40ECDDDE2994827200BBCF97 /* ImagePicker.swift */,
-				40C173192995A2320003D482 /* EncryptorVC.swift */,
 				40C1731D2995A9760003D482 /* ResultsVC.swift */,
 				40C1731F299699A80003D482 /* MainVC.swift */,
-				40C1732129969C4A0003D482 /* Decryptor.swift */,
 				4036BACF299A8EB400C494E2 /* QRHelper.swift */,
 				40707AD6299AC26500DF14D0 /* SettingsVC.swift */,
 				40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */,
+				40707ADA299B02BA00DF14D0 /* CryptoVC.swift */,
+				406D8BA4299B4E8800C8B04B /* PageController.swift */,
+				406D8BAA299B605200C8B04B /* GuidePage.swift */,
 			);
 			path = Crypton;
 			sourceTree = "<group>";
@@ -315,15 +318,16 @@
 			buildActionMask = 2147483647;
 			files = (
 				40707AD7299AC26500DF14D0 /* SettingsVC.swift in Sources */,
+				406D8BAB299B605200C8B04B /* GuidePage.swift in Sources */,
 				4036BAD0299A8EB400C494E2 /* QRHelper.swift in Sources */,
 				40C17320299699A80003D482 /* MainVC.swift in Sources */,
 				40C1731E2995A9760003D482 /* ResultsVC.swift in Sources */,
-				40C1731A2995A2320003D482 /* EncryptorVC.swift in Sources */,
 				40D664AC28D8EA6200CD67A8 /* UITest.xcdatamodeld in Sources */,
-				40C1732229969C4A0003D482 /* Decryptor.swift in Sources */,
 				40ECDDDD299481D700BBCF97 /* ReferenceCode.swift in Sources */,
 				40ECDDDF2994827200BBCF97 /* ImagePicker.swift in Sources */,
 				40D664A228D8EA6200CD67A8 /* AppDelegate.swift in Sources */,
+				406D8BA5299B4E8800C8B04B /* PageController.swift in Sources */,
+				40707ADB299B02BA00DF14D0 /* CryptoVC.swift in Sources */,
 				40D664A428D8EA6200CD67A8 /* SceneDelegate.swift in Sources */,
 				40707AD9299AC91500DF14D0 /* PlaceholderTextView.swift in Sources */,
 			);
