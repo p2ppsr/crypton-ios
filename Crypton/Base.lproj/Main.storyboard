@@ -865,7 +865,7 @@
         <!--RecipientVC-->
         <scene sceneID="13z-hh-DdP">
             <objects>
-                <viewController restorationIdentifier="encryptorVC" title="RecipientVC" id="mYc-s2-0GK" customClass="RecipientVC" customModule="Crypton" customModuleProvider="target" sceneMemberID="viewController">
+                <viewController restorationIdentifier="encryptorVC" title="RecipientVC" id="mYc-s2-0GK" customClass="CounterpartyVC" customModule="Crypton" customModuleProvider="target" sceneMemberID="viewController">
                     <view key="view" contentMode="scaleToFill" id="PpT-hc-HIZ">
                         <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
@@ -1016,7 +1016,7 @@
         <!--SenderVC-->
         <scene sceneID="bca-CV-kdY">
             <objects>
-                <viewController restorationIdentifier="encryptorVC" title="SenderVC" id="7eN-Mw-iMQ" customClass="RecipientVC" customModule="Crypton" customModuleProvider="target" sceneMemberID="viewController">
+                <viewController restorationIdentifier="encryptorVC" title="SenderVC" id="7eN-Mw-iMQ" customClass="CounterpartyVC" customModule="Crypton" customModuleProvider="target" sceneMemberID="viewController">
                     <view key="view" contentMode="scaleToFill" id="rHY-Pj-syz">
                         <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>

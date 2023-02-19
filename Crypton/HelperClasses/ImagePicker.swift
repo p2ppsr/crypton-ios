@@ -55,7 +55,7 @@ open class ImagePicker: NSObject {
             
             let storyboard = UIStoryboard(name: "Main", bundle: nil)
             let qrScannerVC = storyboard.instantiateViewController(withIdentifier: "qrScannerVC") as! QRScannerVC
-            qrScannerVC.delegate = self.presentationController as! DecryptorVC
+            qrScannerVC.delegate = self.presentationController as? QRScannerDelegate
             DispatchQueue.main.async {
                 self.presentationController?.present(qrScannerVC, animated: true)
             }

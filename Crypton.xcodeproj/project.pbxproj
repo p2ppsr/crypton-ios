@@ -9,7 +9,7 @@
 /* Begin PBXBuildFile section */
 		4036BAD0299A8EB400C494E2 /* QRHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4036BACF299A8EB400C494E2 /* QRHelper.swift */; };
 		4054E21D29A18BFC00267EC9 /* QRScannerVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */; };
-		4054E21F29A1A03200267EC9 /* RecipientVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E21E29A1A03200267EC9 /* RecipientVC.swift */; };
+		4054E21F29A1A03200267EC9 /* CounterpartyVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E21E29A1A03200267EC9 /* CounterpartyVC.swift */; };
 		4054E22129A1A44200267EC9 /* MessageVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E22029A1A44200267EC9 /* MessageVC.swift */; };
 		4054E22329A1AFA600267EC9 /* EncryptorVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E22229A1AFA600267EC9 /* EncryptorVC.swift */; };
 		4054E22529A1B5EE00267EC9 /* DecryptorVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E22429A1B5EE00267EC9 /* DecryptorVC.swift */; };
@@ -54,7 +54,7 @@
 /* Begin PBXFileReference section */
 		4036BACF299A8EB400C494E2 /* QRHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRHelper.swift; sourceTree = "<group>"; };
 		4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerVC.swift; sourceTree = "<group>"; };
-		4054E21E29A1A03200267EC9 /* RecipientVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipientVC.swift; sourceTree = "<group>"; };
+		4054E21E29A1A03200267EC9 /* CounterpartyVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CounterpartyVC.swift; sourceTree = "<group>"; };
 		4054E22029A1A44200267EC9 /* MessageVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageVC.swift; sourceTree = "<group>"; };
 		4054E22229A1AFA600267EC9 /* EncryptorVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EncryptorVC.swift; sourceTree = "<group>"; };
 		4054E22429A1B5EE00267EC9 /* DecryptorVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecryptorVC.swift; sourceTree = "<group>"; };
@@ -108,6 +108,42 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		4054E22629A1D46B00267EC9 /* Old */ = {
+			isa = PBXGroup;
+			children = (
+				40707ADA299B02BA00DF14D0 /* CryptoVC.swift */,
+			);
+			path = Old;
+			sourceTree = "<group>";
+		};
+		4054E22729A1D49F00267EC9 /* HelperClasses */ = {
+			isa = PBXGroup;
+			children = (
+				406D8BAA299B605200C8B04B /* GuidePage.swift */,
+				406D8BA4299B4E8800C8B04B /* PageController.swift */,
+				406D8BB6299C19CF00C8B04B /* Reachability.swift */,
+				40ECDDDE2994827200BBCF97 /* ImagePicker.swift */,
+				4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */,
+				4036BACF299A8EB400C494E2 /* QRHelper.swift */,
+				40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */,
+			);
+			path = HelperClasses;
+			sourceTree = "<group>";
+		};
+		4054E22829A1D7BB00267EC9 /* MainViews */ = {
+			isa = PBXGroup;
+			children = (
+				40C1731F299699A80003D482 /* MainVC.swift */,
+				4054E21E29A1A03200267EC9 /* CounterpartyVC.swift */,
+				4054E22229A1AFA600267EC9 /* EncryptorVC.swift */,
+				4054E22029A1A44200267EC9 /* MessageVC.swift */,
+				4054E22429A1B5EE00267EC9 /* DecryptorVC.swift */,
+				40C1731D2995A9760003D482 /* ResultsVC.swift */,
+				40707AD6299AC26500DF14D0 /* SettingsVC.swift */,
+			);
+			path = MainViews;
+			sourceTree = "<group>";
+		};
 		40869F1028DA392C00E0E8D5 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
@@ -139,6 +175,9 @@
 		40D664A028D8EA6200CD67A8 /* Crypton */ = {
 			isa = PBXGroup;
 			children = (
+				4054E22829A1D7BB00267EC9 /* MainViews */,
+				4054E22729A1D49F00267EC9 /* HelperClasses */,
+				4054E22629A1D46B00267EC9 /* Old */,
 				40D664A128D8EA6200CD67A8 /* AppDelegate.swift */,
 				40D664A328D8EA6200CD67A8 /* SceneDelegate.swift */,
 				40D664A728D8EA6200CD67A8 /* Main.storyboard */,
@@ -146,21 +185,6 @@
 				40D664AF28D8EA6300CD67A8 /* LaunchScreen.storyboard */,
 				40D664B228D8EA6300CD67A8 /* Info.plist */,
 				40D664AA28D8EA6200CD67A8 /* UITest.xcdatamodeld */,
-				40ECDDDE2994827200BBCF97 /* ImagePicker.swift */,
-				40C1731D2995A9760003D482 /* ResultsVC.swift */,
-				40C1731F299699A80003D482 /* MainVC.swift */,
-				4036BACF299A8EB400C494E2 /* QRHelper.swift */,
-				40707AD6299AC26500DF14D0 /* SettingsVC.swift */,
-				40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */,
-				40707ADA299B02BA00DF14D0 /* CryptoVC.swift */,
-				406D8BA4299B4E8800C8B04B /* PageController.swift */,
-				406D8BAA299B605200C8B04B /* GuidePage.swift */,
-				406D8BB6299C19CF00C8B04B /* Reachability.swift */,
-				4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */,
-				4054E21E29A1A03200267EC9 /* RecipientVC.swift */,
-				4054E22029A1A44200267EC9 /* MessageVC.swift */,
-				4054E22229A1AFA600267EC9 /* EncryptorVC.swift */,
-				4054E22429A1B5EE00267EC9 /* DecryptorVC.swift */,
 			);
 			path = Crypton;
 			sourceTree = "<group>";
@@ -327,7 +351,7 @@
 				40C17320299699A80003D482 /* MainVC.swift in Sources */,
 				40C1731E2995A9760003D482 /* ResultsVC.swift in Sources */,
 				4054E22529A1B5EE00267EC9 /* DecryptorVC.swift in Sources */,
-				4054E21F29A1A03200267EC9 /* RecipientVC.swift in Sources */,
+				4054E21F29A1A03200267EC9 /* CounterpartyVC.swift in Sources */,
 				4054E21D29A18BFC00267EC9 /* QRScannerVC.swift in Sources */,
 				4054E22129A1A44200267EC9 /* MessageVC.swift in Sources */,
 				40D664AC28D8EA6200CD67A8 /* UITest.xcdatamodeld in Sources */,
@@ -513,7 +537,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 3YQ69SSGVS;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Crypton/Info.plist;
@@ -533,7 +557,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.01;
+				MARKETING_VERSION = 1.02;
 				PRODUCT_BUNDLE_IDENTIFIER = com.projectbabbage.Crypton;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -552,7 +576,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 3YQ69SSGVS;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Crypton/Info.plist;
@@ -572,7 +596,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.01;
+				MARKETING_VERSION = 1.02;
 				PRODUCT_BUNDLE_IDENTIFIER = com.projectbabbage.Crypton;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

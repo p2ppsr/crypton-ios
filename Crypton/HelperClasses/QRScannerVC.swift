@@ -9,6 +9,16 @@ import Foundation
 import UIKit
 import AVFoundation
 
+/**
+ Protocol definition for the QR scanner callbacks
+ */
+protocol QRScannerDelegate: AnyObject {
+    func didScanQRCode(withData data: String)
+}
+
+/**
+  View Controller responsible for loading QR scanner and triggering callback
+ */
 class QRScannerVC: UIViewController, AVCapturePhotoCaptureDelegate, AVCaptureMetadataOutputObjectsDelegate {
     
     // These are needed for live QR code capture
@@ -23,8 +33,6 @@ class QRScannerVC: UIViewController, AVCapturePhotoCaptureDelegate, AVCaptureMet
     
     @IBOutlet var qrScannerView: UIView!
     @IBOutlet var previewView: UIView!
-//    @IBOutlet var counterpartyTextField: UITextField!
-//    @IBOutlet var textView: PlaceholderTextView!
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -56,11 +64,8 @@ class QRScannerVC: UIViewController, AVCapturePhotoCaptureDelegate, AVCaptureMet
             videoPreviewLayer?.videoGravity = AVLayerVideoGravity.resizeAspectFill
             videoPreviewLayer?.frame = view.layer.bounds
             previewView.layer.addSublayer(videoPreviewLayer!)
-
-//            sessionQueue.async {
-                self.captureSession?.startRunning()
-//                self.captureSession?.stopRunning()
-//              }
+            
+            self.captureSession?.startRunning()
             
             // Crop the cature window
             let captureMetadataOutput = AVCaptureMetadataOutput()
@@ -114,11 +119,6 @@ class QRScannerVC: UIViewController, AVCapturePhotoCaptureDelegate, AVCaptureMet
                 }
                 
                 dismiss(animated: true, completion: nil)
-                
-//                DispatchQueue.main.async {
-//                    self.qrScannerView.isHidden = true
-//                    self.captureSession?.stopRunning()
-//                }
             }
         }
         

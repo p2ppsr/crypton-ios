@@ -37,9 +37,8 @@ class DecryptorVC: UIViewController, UITextViewDelegate, QRScannerDelegate {
         
         messageTextView.addDoneButton(title: "Done", target: self, selector: #selector(tapDone(sender:)))
         
-//        scanQRCode(self)
         self.imagePicker = ImagePicker(presentationController: self, delegate: self)
-        self.imagePicker.present(from: self.view) // ?
+        self.imagePicker.present(from: self.view)
     }
     
     @objc func tapDone(sender: Any) {
@@ -84,7 +83,7 @@ class DecryptorVC: UIViewController, UITextViewDelegate, QRScannerDelegate {
 extension DecryptorVC: ImagePickerDelegate {
 
     func didSelect(image: UIImage?) {
-        self.secureQRCode = image!
+        self.secureQRCode = image
         if ((image) != nil) {
             let detector:CIDetector=CIDetector(ofType: CIDetectorTypeQRCode, context: nil, options: [CIDetectorAccuracy:CIDetectorAccuracyHigh])!
             let ciImage:CIImage=CIImage(image:self.secureQRCode!)!

@@ -11,19 +11,19 @@ import UIKit
 import Contacts
 import ContactsUI
 
-protocol QRScannerDelegate: AnyObject {
-    func didScanQRCode(withData data: String)
-}
-
-class RecipientVC: UIViewController, CNContactViewControllerDelegate, CNContactPickerDelegate, QRScannerDelegate  {
+class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNContactPickerDelegate, QRScannerDelegate  {
     @IBOutlet var nameLabel: UILabel?
     
     @IBOutlet var nextButton: UIButton!
     var identityKey:String?
     var contactIdentifier:String?
     
+    var imagePicker: ImagePicker!
+    var secureQRCode: UIImage?
+    
     override func viewDidLoad() {
         super.viewDidLoad()
+        self.imagePicker = ImagePicker(presentationController: self, delegate: self)
     }
     func didScanQRCode(withData data: String) {
         addInstantMessageService(to: contactIdentifier!, identityKey: data)
@@ -37,6 +37,7 @@ class RecipientVC: UIViewController, CNContactViewControllerDelegate, CNContactP
         let contactPicker = CNContactPickerViewController()
         contactPicker.delegate = self
         contactPicker.displayedPropertyKeys = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey, CNContactEmailAddressesKey, CNContactInstantMessageAddressesKey]
+        
         self.present(contactPicker, animated: true, completion: nil)
     }
     
@@ -65,12 +66,20 @@ class RecipientVC: UIViewController, CNContactViewControllerDelegate, CNContactP
         }
         if (((metanetIdentityKey.first?.value.username)) != nil) {
             identityKey = (metanetIdentityKey.first?.value.username) as String?
-            print(identityKey! as String)
             nameLabel?.text = firstName + " " + lastName
             nextButton.isHidden = false
         } else {
             DispatchQueue.main.async {
-                self.present(qrScannerVC, animated: true)
+                // Create a new alert
+                let dialogMessage = UIAlertController(title: "New Counterparty", message: "Identity Key Not found!", preferredStyle: .alert)
+                dialogMessage.addAction(UIAlertAction(title: "Select QR Code", style: .default, handler: { (action) -> Void in
+                    self.imagePicker.present(from: self.view)
+                 }))
+                dialogMessage.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: { (action) -> Void in
+                    // nothing
+                 }))
+                // Present alert to user
+                self.present(dialogMessage, animated: true, completion: nil)
             }
         }
         
@@ -139,6 +148,10 @@ class RecipientVC: UIViewController, CNContactViewControllerDelegate, CNContactP
                 saveRequest.update(mutableContact)
                 do {
                     try store.execute(saveRequest)
+                    
+                    nameLabel?.text = contact.givenName + " " + contact.familyName
+                    nextButton.isHidden = false
+                    
                     print("Contact updated with instant message service.")
                 } catch let error {
                     print("Error saving contact: \(error)")
@@ -150,7 +163,34 @@ class RecipientVC: UIViewController, CNContactViewControllerDelegate, CNContactP
     }
     
     override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
-        guard let vc = segue.destination as? MessageVC else { return }
-        vc.counterparty = identityKey ?? "self"
+        if let vc = segue.destination as? MessageVC {
+            vc.counterparty = identityKey ?? "self"
+        } else if let vc = segue.destination as? DecryptorVC {
+            vc.counterparty = identityKey ?? "self"
+        }
     }
 }
+extension CounterpartyVC: ImagePickerDelegate {
+
+    func didSelect(image: UIImage?) {
+        self.secureQRCode = image!
+        if ((image) != nil) {
+            let detector:CIDetector=CIDetector(ofType: CIDetectorTypeQRCode, context: nil, options: [CIDetectorAccuracy:CIDetectorAccuracyHigh])!
+            let ciImage:CIImage=CIImage(image:self.secureQRCode!)!
+            var message=""
+  
+            let features=detector.features(in: ciImage)
+            for feature in features as! [CIQRCodeFeature] {
+                message += feature.messageString!
+            }
+            
+            if message=="" {
+                print("nothing")
+            } else {
+                addInstantMessageService(to: contactIdentifier!, identityKey: message)
+                nextButton.isHidden = false
+            }
+        }
+    }
+}
+
