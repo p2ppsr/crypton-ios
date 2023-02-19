@@ -9,6 +9,8 @@ import Foundation
 import UIKit
 
 class PlaceholderTextView: UITextView {
+    var decreaseAmount = 185.0
+    var repositionAmount = 50.0
     
     var placeholder: String = "Enter the text, or scan the QR code, that you would like to encrypt or decrypt!"
     
@@ -42,6 +44,8 @@ extension PlaceholderTextView: UITextViewDelegate {
         if textView.text == placeholder {
             textView.text = ""
         }
+        
+        textView.frame = CGRect(x: textView.frame.origin.x, y: textView.frame.origin.y - repositionAmount, width: textView.frame.width, height: textView.frame.height - decreaseAmount)
     }
     
     func textViewDidEndEditing(_ textView: UITextView) {
@@ -49,6 +53,7 @@ extension PlaceholderTextView: UITextViewDelegate {
             textView.text = placeholder
             textView.textColor = .lightGray
         }
+        textView.frame = CGRect(x: textView.frame.origin.x, y: textView.frame.origin.y + repositionAmount, width: textView.frame.width, height: textView.frame.height + decreaseAmount)
     }
     func textViewShouldEndEditing(_ textView: UITextView) -> Bool {
         textView.resignFirstResponder()

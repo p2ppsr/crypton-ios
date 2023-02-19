@@ -10,7 +10,7 @@ import UIKit
 import BabbageSDK
 import AVFoundation
 
-class CryptoVC: UIViewController, AVCapturePhotoCaptureDelegate, AVCaptureMetadataOutputObjectsDelegate, UITextFieldDelegate, UITextViewDelegate {
+class EncryptorVC: UIViewController, AVCapturePhotoCaptureDelegate, AVCaptureMetadataOutputObjectsDelegate, UITextFieldDelegate, UITextViewDelegate {
     
     let PROTOCOL_ID = "crypton"
     let KEY_ID = "1"
@@ -301,7 +301,7 @@ class CryptoVC: UIViewController, AVCapturePhotoCaptureDelegate, AVCaptureMetada
     }
 }
 
-extension CryptoVC: ImagePickerDelegate {
+extension EncryptorVC: ImagePickerDelegate {
 
     func didSelect(image: UIImage?) {
         self.secureQRCode = image!

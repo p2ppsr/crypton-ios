@@ -10,10 +10,13 @@ import UIKit
 import BabbageSDK
 
 class MainVC: UIViewController {
+    
     let PROTOCOL_ID = "crypton"
     let KEY_ID = "1"
     var sdk:BabbageSDK = BabbageSDK(webviewStartURL: "https://mobile-portal.babbage.systems")
     var identityKey:String?
+    
+    var contactIdentifier:String?
     
     @IBAction func getInfo(_ sender: Any) {
         Task.init {
@@ -28,11 +31,24 @@ class MainVC: UIViewController {
             self.navigationController?.present(settingsView, animated: true, completion: nil)
         }
     }
-
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         sdk.setParent(parent: self)
+        
+        
         self.navigationController?.navigationBar.titleTextAttributes = [NSAttributedString.Key.foregroundColor:  UIColor(red: 154/255, green: 224/255, blue: 157/255, alpha: 1.0)]
+        
+        if Reachability.isConnectedToNetwork() {
+            // Internet connection reachable
+        } else{
+            // Create a new alert
+            let dialogMessage = UIAlertController(title: "Error", message: "Internet connection not available!", preferredStyle: .alert)
+            dialogMessage.addAction(UIAlertAction(title: "OK", style: .default, handler: { (action) -> Void in
+            }))
+            // Present alert to user
+            self.present(dialogMessage, animated: true, completion: nil)
+        }
     }
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)

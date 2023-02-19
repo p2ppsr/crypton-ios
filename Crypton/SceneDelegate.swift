@@ -21,19 +21,17 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let storyboard = UIStoryboard(name: "Main", bundle: nil)
         let pageController = storyboard.instantiateViewController(withIdentifier: "PageController") as! PageController
         
-        
         // Override point for customization after application launch.
         let userDefaults = UserDefaults.standard
         if userDefaults.bool(forKey: "hasCompletedGuide") {
             // App has been launched before
-//            userDefaults.set(false, forKey: "hasCompletedGuide")
         } else {
             // First launch
-//            userDefaults.set(true, forKey: "hasCompletedGuide")
-            // TODO: Put back!
-            
+            userDefaults.set(true, forKey: "hasCompletedGuide")
+        
             if let windowScene = scene as? UIWindowScene {
                 let window = UIWindow(windowScene: windowScene)
+                
                 window.rootViewController = pageController
                 self.window = window
                 window.makeKeyAndVisible()
