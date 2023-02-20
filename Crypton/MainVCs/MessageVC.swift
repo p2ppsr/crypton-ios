@@ -8,12 +8,13 @@
 import Foundation
 import UIKit
 import BabbageSDK
+import GenericJSON
 import FLAnimatedImage
 
 class MessageVC: UIViewController, UITextViewDelegate {
     
     let TEXTVIEW_DECREASE_AMOUNT = 185.0
-    let PROTOCOL_ID = "crypton"
+    let PROTOCOL_ID:JSON = [1, "crypton"]
     let KEY_ID = "1"
     var counterparty:String = "self"
     var sdk:BabbageSDK = BabbageSDK(webviewStartURL: "https://mobile-portal.babbage.systems") // TODO: Switch to prod before release
@@ -24,13 +25,14 @@ class MessageVC: UIViewController, UITextViewDelegate {
     
     override func viewDidLoad() {
         super.viewDidLoad()
+        // Note: The animation view must be added before the webview to still show permission popups
+        loadingAnimationView = addLoadingAnimation(parentView: view)
         sdk.setParent(parent: self)
         
         messageTextView.placeholder = "Enter the message you would like to encrypt"
         messageTextView.text = "Enter the message you would like to encrypt"
         
         messageTextView.addDoneButton(title: "Done", target: self, selector: #selector(tapDone(sender:)))
-        loadingAnimationView = addLoadingAnimation(parentView: view)
     }
 
     @objc func tapDone(sender: Any) {
@@ -54,24 +56,28 @@ class MessageVC: UIViewController, UITextViewDelegate {
 
         Task.detached { [self] in
             let startTime = DispatchTime.now()
-            
-            let encryptedText = await sdk.encrypt(plaintext: messageTextView.text, protocolID: PROTOCOL_ID, keyID: KEY_ID, counterparty: counterparty)
-            
-            let endTime = DispatchTime.now()
-            let elapsedTime = Double(endTime.uptimeNanoseconds - startTime.uptimeNanoseconds) / 1_000_000_000
-            let goalTime = 3.0
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + (goalTime - elapsedTime)) {
-                self.loadingAnimationView.stopAnimating()
-                self.loadingAnimationView.isHidden = true
+
+            do {
+                let encryptedText = try await sdk.encrypt(plaintext: messageTextView.text, protocolID: PROTOCOL_ID, keyID: KEY_ID, counterparty: counterparty)
                 
-                self.messageTextView.text = encryptedText
+                let endTime = DispatchTime.now()
+                let elapsedTime = Double(endTime.uptimeNanoseconds - startTime.uptimeNanoseconds) / 1_000_000_000
+                let goalTime = 3.0
                 
-                if let vc = UIStoryboard(name: "Main", bundle: nil).instantiateViewController(withIdentifier: "resultsVC") as? ResultsVC {
-                    vc.secureQRCode = generateQRCode(from: encryptedText, centerImage: UIImage(named: "encryptedQRLogo"))
-                    // Code to be executed after a delay of 1 second
-                    self.navigationController?.pushViewController(vc, animated: true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + (goalTime - elapsedTime)) {
+                    self.loadingAnimationView.stopAnimating()
+                    self.loadingAnimationView.isHidden = true
+                    
+                    self.messageTextView.text = encryptedText
+                    
+                    if let vc = UIStoryboard(name: "Main", bundle: nil).instantiateViewController(withIdentifier: "resultsVC") as? ResultsVC {
+                        vc.secureQRCode = generateQRCode(from: encryptedText, centerImage: UIImage(named: "encryptedQRLogo"))
+                        // Code to be executed after a delay of 1 second
+                        self.navigationController?.pushViewController(vc, animated: true)
+                    }
                 }
+            } catch {
+                showErrorMessage(vc: self, error: error)
             }
         }
     }

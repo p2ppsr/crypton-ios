@@ -44,14 +44,12 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
         // Manually add a button for adding a new contact
         if #available(iOS 15.0, *) {
             let newContactButton = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addNewContact))
-            navigationItem.rightBarButtonItem = newContactButton
-            
+            picker.navigationItem.rightBarButtonItem = newContactButton
             let navigationController = UINavigationController(rootViewController: picker)
             navigationController.navigationBar.tintColor = .systemBlue
             navigationController.navigationBar.prefersLargeTitles = false
             navigationController.topViewController?.navigationItem.rightBarButtonItem = newContactButton
-            
-            // Present a navigation controller t oshow the newContactButton in
+            // Present a navigation controller with the newContact button
             present(navigationController, animated: true, completion: nil)
         } else {
             // Below iOS 15.0 is not supported anyways

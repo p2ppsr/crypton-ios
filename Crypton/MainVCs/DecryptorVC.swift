@@ -8,13 +8,12 @@
 import Foundation
 import UIKit
 import BabbageSDK
-
-
+import GenericJSON
 
 class DecryptorVC: UIViewController, UITextViewDelegate, QRScannerDelegate {
     
     let TEXTVIEW_DECREASE_AMOUNT = 185.0
-    let PROTOCOL_ID = "crypton"
+    let PROTOCOL_ID:JSON = [1, "crypton"]
     let KEY_ID = "1"
     var counterparty:String = "self"
     var sdk:BabbageSDK = BabbageSDK(webviewStartURL: "https://mobile-portal.babbage.systems") // TODO: Switch to prod before release
@@ -66,12 +65,7 @@ class DecryptorVC: UIViewController, UITextViewDelegate, QRScannerDelegate {
             do {
                 messageTextView.text = try await sdk.decrypt(ciphertext: encryptedMessage!, protocolID: PROTOCOL_ID, keyID: KEY_ID, counterparty: counterparty)
             } catch {
-                // Create a new alert
-                let dialogMessage = UIAlertController(title: "Error", message: "Decryption failed!", preferredStyle: .alert)
-                dialogMessage.addAction(UIAlertAction(title: "OK", style: .default, handler: { (action) -> Void in
-                 }))
-                // Present alert to user
-                self.present(dialogMessage, animated: true, completion: nil)
+                showErrorMessage(vc: self, error: error)
             }
         }
     }

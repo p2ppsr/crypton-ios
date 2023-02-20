@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		4036BAD0299A8EB400C494E2 /* QRHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4036BACF299A8EB400C494E2 /* QRHelper.swift */; };
+		4036BAD0299A8EB400C494E2 /* HelperFunctions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4036BACF299A8EB400C494E2 /* HelperFunctions.swift */; };
 		4054E21D29A18BFC00267EC9 /* QRScannerVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */; };
 		4054E21F29A1A03200267EC9 /* CounterpartyVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E21E29A1A03200267EC9 /* CounterpartyVC.swift */; };
 		4054E22129A1A44200267EC9 /* MessageVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E22029A1A44200267EC9 /* MessageVC.swift */; };
@@ -20,7 +20,7 @@
 		40707ADB299B02BA00DF14D0 /* CryptoVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40707ADA299B02BA00DF14D0 /* CryptoVC.swift */; };
 		4099C8A129A309CA006905B2 /* FLAnimatedImage in Frameworks */ = {isa = PBXBuildFile; productRef = 4099C8A029A309CA006905B2 /* FLAnimatedImage */; };
 		4099C8A329A318CA006905B2 /* LoadingAnimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4099C8A229A318CA006905B2 /* LoadingAnimation.swift */; };
-		4099C8A729A32292006905B2 /* BabbageSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 4099C8A629A32292006905B2 /* BabbageSDK */; };
+		4099C8AE29A40781006905B2 /* BabbageSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 4099C8AD29A40781006905B2 /* BabbageSDK */; };
 		40C1731E2995A9760003D482 /* ResultsVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40C1731D2995A9760003D482 /* ResultsVC.swift */; };
 		40C17320299699A80003D482 /* MainVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40C1731F299699A80003D482 /* MainVC.swift */; };
 		40D664A228D8EA6200CD67A8 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D664A128D8EA6200CD67A8 /* AppDelegate.swift */; };
@@ -53,7 +53,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		4036BACF299A8EB400C494E2 /* QRHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRHelper.swift; sourceTree = "<group>"; };
+		4036BACF299A8EB400C494E2 /* HelperFunctions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperFunctions.swift; sourceTree = "<group>"; };
 		4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerVC.swift; sourceTree = "<group>"; };
 		4054E21E29A1A03200267EC9 /* CounterpartyVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CounterpartyVC.swift; sourceTree = "<group>"; };
 		4054E22029A1A44200267EC9 /* MessageVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageVC.swift; sourceTree = "<group>"; };
@@ -65,7 +65,7 @@
 		40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderTextView.swift; sourceTree = "<group>"; };
 		40707ADA299B02BA00DF14D0 /* CryptoVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoVC.swift; sourceTree = "<group>"; };
 		4099C8A229A318CA006905B2 /* LoadingAnimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadingAnimation.swift; sourceTree = "<group>"; };
-		4099C8A529A321DC006905B2 /* babbage-sdk-ios */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = "babbage-sdk-ios"; path = "../babbage-sdk-ios"; sourceTree = "<group>"; };
+		4099C8AC29A40734006905B2 /* babbage-sdk-ios */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = "babbage-sdk-ios"; path = "../babbage-sdk-ios"; sourceTree = "<group>"; };
 		40C1731D2995A9760003D482 /* ResultsVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsVC.swift; sourceTree = "<group>"; };
 		40C1731F299699A80003D482 /* MainVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainVC.swift; sourceTree = "<group>"; };
 		40D6649E28D8EA6200CD67A8 /* Crypton.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Crypton.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -89,7 +89,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				4099C8A729A32292006905B2 /* BabbageSDK in Frameworks */,
+				4099C8AE29A40781006905B2 /* BabbageSDK in Frameworks */,
 				4099C8A129A309CA006905B2 /* FLAnimatedImage in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -127,7 +127,7 @@
 				406D8BB6299C19CF00C8B04B /* Reachability.swift */,
 				40ECDDDE2994827200BBCF97 /* ImagePicker.swift */,
 				4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */,
-				4036BACF299A8EB400C494E2 /* QRHelper.swift */,
+				4036BACF299A8EB400C494E2 /* HelperFunctions.swift */,
 				40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */,
 				4099C8A229A318CA006905B2 /* LoadingAnimation.swift */,
 			);
@@ -157,7 +157,7 @@
 		4099C8A429A321DC006905B2 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				4099C8A529A321DC006905B2 /* babbage-sdk-ios */,
+				4099C8AC29A40734006905B2 /* babbage-sdk-ios */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -236,7 +236,7 @@
 			name = Crypton;
 			packageProductDependencies = (
 				4099C8A029A309CA006905B2 /* FLAnimatedImage */,
-				4099C8A629A32292006905B2 /* BabbageSDK */,
+				4099C8AD29A40781006905B2 /* BabbageSDK */,
 			);
 			productName = UITest;
 			productReference = 40D6649E28D8EA6200CD67A8 /* Crypton.app */;
@@ -360,7 +360,7 @@
 				40707AD7299AC26500DF14D0 /* SettingsVC.swift in Sources */,
 				406D8BAB299B605200C8B04B /* GuidePage.swift in Sources */,
 				4099C8A329A318CA006905B2 /* LoadingAnimation.swift in Sources */,
-				4036BAD0299A8EB400C494E2 /* QRHelper.swift in Sources */,
+				4036BAD0299A8EB400C494E2 /* HelperFunctions.swift in Sources */,
 				40C17320299699A80003D482 /* MainVC.swift in Sources */,
 				40C1731E2995A9760003D482 /* ResultsVC.swift in Sources */,
 				4054E22529A1B5EE00267EC9 /* DecryptorVC.swift in Sources */,
@@ -550,7 +550,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 3YQ69SSGVS;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Crypton/Info.plist;
@@ -570,7 +570,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.02;
+				MARKETING_VERSION = 1.03;
 				PRODUCT_BUNDLE_IDENTIFIER = com.projectbabbage.Crypton;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -589,7 +589,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 3YQ69SSGVS;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Crypton/Info.plist;
@@ -609,7 +609,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.02;
+				MARKETING_VERSION = 1.03;
 				PRODUCT_BUNDLE_IDENTIFIER = com.projectbabbage.Crypton;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -755,7 +755,7 @@
 			package = 4099C89F29A309CA006905B2 /* XCRemoteSwiftPackageReference "FLAnimatedImage" */;
 			productName = FLAnimatedImage;
 		};
-		4099C8A629A32292006905B2 /* BabbageSDK */ = {
+		4099C8AD29A40781006905B2 /* BabbageSDK */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BabbageSDK;
 		};

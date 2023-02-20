@@ -8,6 +8,7 @@
 import Foundation
 import UIKit
 import CoreImage
+import BabbageSDK
 
 // The larger the number the smaller the logo
 let logoScaleFactor:CGFloat = 230.0
@@ -55,6 +56,16 @@ func generateQRCode(from string: String, centerImage: UIImage?, color: String? =
     }
     
     return nil
+}
+
+func showErrorMessage(vc: UIViewController, error: Error) {
+    let errorDescription:String = (error as! BabbageError).description
+    // Create a new alert
+    let dialogMessage = UIAlertController(title: "Error", message: errorDescription, preferredStyle: .alert)
+    dialogMessage.addAction(UIAlertAction(title: "OK", style: .default, handler: { (action) -> Void in
+     }))
+    // Present alert to user
+    vc.present(dialogMessage, animated: true, completion: nil)
 }
 
 //func generateGreenQRCode(from string: String, centerImage: UIImage?) -> UIImage? {

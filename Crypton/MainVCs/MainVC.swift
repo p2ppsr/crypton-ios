@@ -25,7 +25,11 @@ class MainVC: UIViewController, BabbageDelegate {
         Task.init {
             // Get the current user's identityKey
             if ((identityKey == nil)) {
-                identityKey = await sdk.getPublicKey(identityKey: true)
+                do {
+                    identityKey = try await sdk.getPublicKey(identityKey: true)
+                } catch {
+                    showErrorMessage(vc: self, error: error)
+                }
             }
             
             // Navigate to the settings view controller
