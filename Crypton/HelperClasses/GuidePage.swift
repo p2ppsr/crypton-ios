@@ -12,6 +12,11 @@ class GuidePage: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
     }
+    @IBAction func restartGuide(_ sender: Any) {
+        if let parent = self.parent as? PageController {
+            parent.restartGuide()
+        }
+    }
     @IBAction func endGuide(_ sender: Any) {
         // Get the current window scene
         guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else {

@@ -12,6 +12,13 @@ class PageController: UIPageViewController, UIPageViewControllerDataSource, UIPa
     
     var pages = [UIViewController]()
     var currentIndex = 0
+    var pageControlView:UIPageControl!
+    
+    func restartGuide() {
+        currentIndex = 0
+        (self.view.subviews[2] as! UIPageControl).currentPage = currentIndex
+        setViewControllers([pages[currentIndex]], direction: UIPageViewController.NavigationDirection.reverse, animated: true, completion: nil)
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -40,7 +47,7 @@ class PageController: UIPageViewController, UIPageViewControllerDataSource, UIPa
         let pageControlX = view.center.x - pageControlSize.width/2
         let pageControlY = view.bounds.maxY - pageControlSize.height - 30
         let pageControlFrame = CGRect(x: pageControlX, y: pageControlY, width: pageControlSize.width, height: pageControlSize.height)
-        let pageControlView = UIPageControl(frame: pageControlFrame)
+        pageControlView = UIPageControl(frame: pageControlFrame)
         pageControlView.numberOfPages = pages.count
         pageControlView.currentPage = 0
         view.addSubview(pageControlView)

@@ -33,11 +33,13 @@ class QRScannerVC: UIViewController, AVCapturePhotoCaptureDelegate, AVCaptureMet
     
     @IBOutlet var qrScannerView: UIView!
     @IBOutlet var previewView: UIView!
-
+    @IBOutlet var exitButton: UIButton!
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         previewView.layer.cornerRadius = 50
         previewView.layer.masksToBounds = true
+//        exitButton.setTitle(exitButtonText ?? "Enter Manually", for: .normal)
     }
     
     override func viewDidAppear(_ animated: Bool) {

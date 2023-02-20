@@ -11,15 +11,16 @@
 		4054E21D29A18BFC00267EC9 /* QRScannerVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */; };
 		4054E21F29A1A03200267EC9 /* CounterpartyVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E21E29A1A03200267EC9 /* CounterpartyVC.swift */; };
 		4054E22129A1A44200267EC9 /* MessageVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E22029A1A44200267EC9 /* MessageVC.swift */; };
-		4054E22329A1AFA600267EC9 /* EncryptorVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E22229A1AFA600267EC9 /* EncryptorVC.swift */; };
 		4054E22529A1B5EE00267EC9 /* DecryptorVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E22429A1B5EE00267EC9 /* DecryptorVC.swift */; };
 		406D8BA5299B4E8800C8B04B /* PageController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 406D8BA4299B4E8800C8B04B /* PageController.swift */; };
 		406D8BAB299B605200C8B04B /* GuidePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 406D8BAA299B605200C8B04B /* GuidePage.swift */; };
 		406D8BB7299C19CF00C8B04B /* Reachability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 406D8BB6299C19CF00C8B04B /* Reachability.swift */; };
-		406D8BBA299C1BAD00C8B04B /* BabbageSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 406D8BB9299C1BAD00C8B04B /* BabbageSDK */; };
 		40707AD7299AC26500DF14D0 /* SettingsVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40707AD6299AC26500DF14D0 /* SettingsVC.swift */; };
 		40707AD9299AC91500DF14D0 /* PlaceholderTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */; };
 		40707ADB299B02BA00DF14D0 /* CryptoVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40707ADA299B02BA00DF14D0 /* CryptoVC.swift */; };
+		4099C8A129A309CA006905B2 /* FLAnimatedImage in Frameworks */ = {isa = PBXBuildFile; productRef = 4099C8A029A309CA006905B2 /* FLAnimatedImage */; };
+		4099C8A329A318CA006905B2 /* LoadingAnimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4099C8A229A318CA006905B2 /* LoadingAnimation.swift */; };
+		4099C8A729A32292006905B2 /* BabbageSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 4099C8A629A32292006905B2 /* BabbageSDK */; };
 		40C1731E2995A9760003D482 /* ResultsVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40C1731D2995A9760003D482 /* ResultsVC.swift */; };
 		40C17320299699A80003D482 /* MainVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40C1731F299699A80003D482 /* MainVC.swift */; };
 		40D664A228D8EA6200CD67A8 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D664A128D8EA6200CD67A8 /* AppDelegate.swift */; };
@@ -56,7 +57,6 @@
 		4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerVC.swift; sourceTree = "<group>"; };
 		4054E21E29A1A03200267EC9 /* CounterpartyVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CounterpartyVC.swift; sourceTree = "<group>"; };
 		4054E22029A1A44200267EC9 /* MessageVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageVC.swift; sourceTree = "<group>"; };
-		4054E22229A1AFA600267EC9 /* EncryptorVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EncryptorVC.swift; sourceTree = "<group>"; };
 		4054E22429A1B5EE00267EC9 /* DecryptorVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecryptorVC.swift; sourceTree = "<group>"; };
 		406D8BA4299B4E8800C8B04B /* PageController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageController.swift; sourceTree = "<group>"; };
 		406D8BAA299B605200C8B04B /* GuidePage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuidePage.swift; sourceTree = "<group>"; };
@@ -64,6 +64,8 @@
 		40707AD6299AC26500DF14D0 /* SettingsVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsVC.swift; sourceTree = "<group>"; };
 		40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderTextView.swift; sourceTree = "<group>"; };
 		40707ADA299B02BA00DF14D0 /* CryptoVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoVC.swift; sourceTree = "<group>"; };
+		4099C8A229A318CA006905B2 /* LoadingAnimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadingAnimation.swift; sourceTree = "<group>"; };
+		4099C8A529A321DC006905B2 /* babbage-sdk-ios */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = "babbage-sdk-ios"; path = "../babbage-sdk-ios"; sourceTree = "<group>"; };
 		40C1731D2995A9760003D482 /* ResultsVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsVC.swift; sourceTree = "<group>"; };
 		40C1731F299699A80003D482 /* MainVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainVC.swift; sourceTree = "<group>"; };
 		40D6649E28D8EA6200CD67A8 /* Crypton.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Crypton.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -87,7 +89,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				406D8BBA299C1BAD00C8B04B /* BabbageSDK in Frameworks */,
+				4099C8A729A32292006905B2 /* BabbageSDK in Frameworks */,
+				4099C8A129A309CA006905B2 /* FLAnimatedImage in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -126,22 +129,22 @@
 				4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */,
 				4036BACF299A8EB400C494E2 /* QRHelper.swift */,
 				40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */,
+				4099C8A229A318CA006905B2 /* LoadingAnimation.swift */,
 			);
 			path = HelperClasses;
 			sourceTree = "<group>";
 		};
-		4054E22829A1D7BB00267EC9 /* MainViews */ = {
+		4054E22829A1D7BB00267EC9 /* MainVCs */ = {
 			isa = PBXGroup;
 			children = (
 				40C1731F299699A80003D482 /* MainVC.swift */,
 				4054E21E29A1A03200267EC9 /* CounterpartyVC.swift */,
-				4054E22229A1AFA600267EC9 /* EncryptorVC.swift */,
 				4054E22029A1A44200267EC9 /* MessageVC.swift */,
 				4054E22429A1B5EE00267EC9 /* DecryptorVC.swift */,
 				40C1731D2995A9760003D482 /* ResultsVC.swift */,
 				40707AD6299AC26500DF14D0 /* SettingsVC.swift */,
 			);
-			path = MainViews;
+			path = MainVCs;
 			sourceTree = "<group>";
 		};
 		40869F1028DA392C00E0E8D5 /* Frameworks */ = {
@@ -151,9 +154,18 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
+		4099C8A429A321DC006905B2 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				4099C8A529A321DC006905B2 /* babbage-sdk-ios */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
 		40D6649528D8EA6200CD67A8 = {
 			isa = PBXGroup;
 			children = (
+				4099C8A429A321DC006905B2 /* Packages */,
 				40D664A028D8EA6200CD67A8 /* Crypton */,
 				40D664BA28D8EA6300CD67A8 /* CryptonTests */,
 				40D664C428D8EA6300CD67A8 /* CryptonUITests */,
@@ -175,7 +187,7 @@
 		40D664A028D8EA6200CD67A8 /* Crypton */ = {
 			isa = PBXGroup;
 			children = (
-				4054E22829A1D7BB00267EC9 /* MainViews */,
+				4054E22829A1D7BB00267EC9 /* MainVCs */,
 				4054E22729A1D49F00267EC9 /* HelperClasses */,
 				4054E22629A1D46B00267EC9 /* Old */,
 				40D664A128D8EA6200CD67A8 /* AppDelegate.swift */,
@@ -223,7 +235,8 @@
 			);
 			name = Crypton;
 			packageProductDependencies = (
-				406D8BB9299C1BAD00C8B04B /* BabbageSDK */,
+				4099C8A029A309CA006905B2 /* FLAnimatedImage */,
+				4099C8A629A32292006905B2 /* BabbageSDK */,
 			);
 			productName = UITest;
 			productReference = 40D6649E28D8EA6200CD67A8 /* Crypton.app */;
@@ -298,7 +311,7 @@
 			);
 			mainGroup = 40D6649528D8EA6200CD67A8;
 			packageReferences = (
-				406D8BB8299C1BAD00C8B04B /* XCRemoteSwiftPackageReference "babbage-sdk-ios" */,
+				4099C89F29A309CA006905B2 /* XCRemoteSwiftPackageReference "FLAnimatedImage" */,
 			);
 			productRefGroup = 40D6649F28D8EA6200CD67A8 /* Products */;
 			projectDirPath = "";
@@ -345,8 +358,8 @@
 			files = (
 				406D8BB7299C19CF00C8B04B /* Reachability.swift in Sources */,
 				40707AD7299AC26500DF14D0 /* SettingsVC.swift in Sources */,
-				4054E22329A1AFA600267EC9 /* EncryptorVC.swift in Sources */,
 				406D8BAB299B605200C8B04B /* GuidePage.swift in Sources */,
+				4099C8A329A318CA006905B2 /* LoadingAnimation.swift in Sources */,
 				4036BAD0299A8EB400C494E2 /* QRHelper.swift in Sources */,
 				40C17320299699A80003D482 /* MainVC.swift in Sources */,
 				40C1731E2995A9760003D482 /* ResultsVC.swift in Sources */,
@@ -726,20 +739,24 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		406D8BB8299C1BAD00C8B04B /* XCRemoteSwiftPackageReference "babbage-sdk-ios" */ = {
+		4099C89F29A309CA006905B2 /* XCRemoteSwiftPackageReference "FLAnimatedImage" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/p2ppsr/babbage-sdk-ios";
+			repositoryURL = "https://github.com/Flipboard/FLAnimatedImage";
 			requirement = {
-				branch = master;
-				kind = branch;
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		406D8BB9299C1BAD00C8B04B /* BabbageSDK */ = {
+		4099C8A029A309CA006905B2 /* FLAnimatedImage */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 406D8BB8299C1BAD00C8B04B /* XCRemoteSwiftPackageReference "babbage-sdk-ios" */;
+			package = 4099C89F29A309CA006905B2 /* XCRemoteSwiftPackageReference "FLAnimatedImage" */;
+			productName = FLAnimatedImage;
+		};
+		4099C8A629A32292006905B2 /* BabbageSDK */ = {
+			isa = XCSwiftPackageProductDependency;
 			productName = BabbageSDK;
 		};
 /* End XCSwiftPackageProductDependency section */

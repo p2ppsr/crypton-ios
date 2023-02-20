@@ -47,12 +47,8 @@ open class ImagePicker: NSObject {
     public func present(from sourceView: UIView) {
 
         let alertController = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
-
-        // Note: This code could be improved with a shared class between encryptor and decryptor!
         let scanAction = UIAlertAction(title: "Scan QR Code", style: .default, handler: {_ in
-//            (self.presentationController as! QRScannerVC).captureSession?.startRunning()
-//            (self.presentationController as! QRScannerVC).qrScannerView.isHidden = false
-            
+            // Configure the delegate and present the view
             let storyboard = UIStoryboard(name: "Main", bundle: nil)
             let qrScannerVC = storyboard.instantiateViewController(withIdentifier: "qrScannerVC") as! QRScannerVC
             qrScannerVC.delegate = self.presentationController as? QRScannerDelegate
