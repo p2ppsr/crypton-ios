@@ -18,49 +18,73 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
     var identityKey:String?
     var contactIdentifier:String?
     
-    var imagePicker: ImagePicker!
-    var secureQRCode: UIImage?
+    var imagePicker:ImagePicker!
+    var secureQRCode:UIImage?
+    var isNewContact:Bool = false
     
     override func viewDidLoad() {
         super.viewDidLoad()
         self.imagePicker = ImagePicker(presentationController: self, delegate: self)
     }
+    
+    // Callback function for scanning QR code
     func didScanQRCode(withData data: String) {
         addInstantMessageService(to: contactIdentifier!, identityKey: data)
         nextButton.isHidden = false
     }
-    @IBAction func selectRecipient(sender: UIButton) {
-        showContactPicker()
-    }
     
-    func showContactPicker() {
-        let contactPicker = CNContactPickerViewController()
-        contactPicker.delegate = self
-        contactPicker.displayedPropertyKeys = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey, CNContactEmailAddressesKey, CNContactInstantMessageAddressesKey]
+    @IBAction func selectCounterparty(sender: UIButton) {
         
-        self.present(contactPicker, animated: true, completion: nil)
+        // Cnfigure the ContactPickerViewController
+        let picker = CNContactPickerViewController()
+        picker.delegate = self
+        picker.displayedPropertyKeys = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey, CNContactEmailAddressesKey, CNContactInstantMessageAddressesKey]
+        picker.predicateForEnablingContact = NSPredicate(value: true)
+
+        // Manually add a button for adding a new contact
+        if #available(iOS 15.0, *) {
+            let newContactButton = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addNewContact))
+            navigationItem.rightBarButtonItem = newContactButton
+            
+            let navigationController = UINavigationController(rootViewController: picker)
+            navigationController.navigationBar.tintColor = .systemBlue
+            navigationController.navigationBar.prefersLargeTitles = false
+            navigationController.topViewController?.navigationItem.rightBarButtonItem = newContactButton
+            
+            // Present a navigation controller t oshow the newContactButton in
+            present(navigationController, animated: true, completion: nil)
+        } else {
+            // Below iOS 15.0 is not supported anyways
+            present(picker, animated: true, completion: nil)
+        }
     }
     
+    // Display a new view controller for adding a new contact
+    @objc func addNewContact() {
+        let newContactVC = CNContactViewController(forNewContact: nil)
+        newContactVC.delegate = self
+
+        // Dismiss the contact picker view controller
+        dismiss(animated: true) {
+            // Present the new contact view controller
+            let navController = UINavigationController(rootViewController: newContactVC)
+            self.isNewContact = true
+            self.present(navController, animated: true, completion: nil)
+        }
+    }
+
+    // Callback function for when a user selects an existing contact
     func contactPicker(_ picker: CNContactPickerViewController, didSelect contact: CNContact) {
-        // Handle the selected contact here
+        // Get the selected contacts name and look for MetaNet Identity Key
         let firstName = contact.givenName
         let lastName = contact.familyName
-        let phoneNumber = contact.phoneNumbers.first?.value.stringValue ?? ""
-        let contactIdentifier = contact.identifier
-        print("Selected contact: \(firstName) \(lastName), phone number: \(phoneNumber)")
+        self.contactIdentifier = contact.identifier
         
         let storyboard = UIStoryboard(name: "Main", bundle: nil)
         let qrScannerVC = storyboard.instantiateViewController(withIdentifier: "qrScannerVC") as! QRScannerVC
         qrScannerVC.delegate = self
-        self.contactIdentifier = contactIdentifier
         
-//           if (contact.instantMessageAddresses.count == 0) {
-//               DispatchQueue.main.async {
-//                   self.present(qrScannerVC, animated: true)
-//               }
-//           } else {
-//
-//           }
+        // Check if an existing MetaNet Identity Key is present on the contact
         let metanetIdentityKey = contact.instantMessageAddresses.filter {
             $0.value.service == "MetaNet Identity Key"
         }
@@ -69,64 +93,40 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
             nameLabel?.text = firstName + " " + lastName
             nextButton.isHidden = false
         } else {
-            DispatchQueue.main.async {
-                // Create a new alert
-                let dialogMessage = UIAlertController(title: "New Counterparty", message: "Identity Key Not found!", preferredStyle: .alert)
-                dialogMessage.addAction(UIAlertAction(title: "Select QR Code", style: .default, handler: { (action) -> Void in
-                    self.imagePicker.present(from: self.view)
-                 }))
-                dialogMessage.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: { (action) -> Void in
-                    // nothing
-                 }))
-                // Present alert to user
-                self.present(dialogMessage, animated: true, completion: nil)
-            }
+            isNewContact = true
+            promptUserForIdentityKey()
         }
-        
-//           if (contact.instantMessageAddresses.count != 0) {
-//               let metanetIdentityKey = contact.instantMessageAddresses.filter {
-//                    $0.value.service == "MetaNet Identity Key"
-//                }
-//           } else {
-//               // Prompt the user to scan / upload QR code
-//
-//               let storyboard = UIStoryboard(name: "Main", bundle: nil)
-//               let qrScannerVC = storyboard.instantiateViewController(withIdentifier: "qrScannerVC") as! QRScannerVC
-//               qrScannerVC.delegate = self
-//               self.contactIdentifier = contactIdentifier
-//
-//               self.present(qrScannerVC, animated: true)
-//           }
-//           if (metanetIdentityKey.first?.value.username == nil) {
-//
-//           } else {
-//               print((metanetIdentityKey.first?.value.username)! as String)
-//           }
     }
     
+    // Do nothing if the picker is canceled
     func contactPickerDidCancel(_ picker: CNContactPickerViewController) {
         // Handle the cancelled contact picker here
         print("Contact picker cancelled")
     }
     
-    
+    // Callback for when a new contact is created
     func contactViewController(_ viewController: CNContactViewController, didCompleteWith contact: CNContact?) {
       guard let contact = contact else { // User tapped "Cancel"
-        navigationController?.popViewController(animated: true)
+          viewController.dismiss(animated: true)
         return
       }
-
+        
       let store = CNContactStore()
       let saveRequest = CNSaveRequest()
       saveRequest.update(contact.mutableCopy() as! CNMutableContact)
       do {
         try store.execute(saveRequest)
-        navigationController?.popViewController(animated: true)
+          viewController.dismiss(animated: true, completion: nil)
+          if (isNewContact) {
+              contactIdentifier = contact.identifier
+              promptUserForIdentityKey()
+          }
       } catch {
         // Handle error
       }
     }
     
+    // Modify a contact to include a MetaNet Identity Key
     func addInstantMessageService(to contactIdentifier: String, identityKey: String) {
         let store = CNContactStore()
         let keysToFetch = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey, CNContactInstantMessageAddressesKey]
@@ -136,6 +136,7 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
             try store.enumerateContacts(with: fetchRequest) { (contact, stop) in
                 // Create a new instant message address with a service and username
                 let instantMessageAddress = CNInstantMessageAddress(username: identityKey, service: "MetaNet Identity Key")
+                self.identityKey = identityKey
                 
                 // Wrap the instant message address in a labeled value with a custom label
                 let labeledValue = CNLabeledValue(label: "MetaNet Identity Key", value: instantMessageAddress)
@@ -151,8 +152,6 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
                     
                     nameLabel?.text = contact.givenName + " " + contact.familyName
                     nextButton.isHidden = false
-                    
-                    print("Contact updated with instant message service.")
                 } catch let error {
                     print("Error saving contact: \(error)")
                 }
@@ -162,6 +161,22 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
         }
     }
     
+    func promptUserForIdentityKey() {
+        DispatchQueue.main.async {
+            // Create a new alert
+            let dialogMessage = UIAlertController(title: "New Counterparty", message: "Identity Key Not found!", preferredStyle: .alert)
+            dialogMessage.addAction(UIAlertAction(title: "Select QR Code", style: .default, handler: { (action) -> Void in
+                self.imagePicker.present(from: self.view)
+             }))
+            dialogMessage.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: { (action) -> Void in
+                // nothing
+             }))
+            // Present alert to user
+            self.present(dialogMessage, animated: true, completion: nil)
+        }
+    }
+    
+    // Pass the identityKey for the given counterparty to the next view
     override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
         if let vc = segue.destination as? MessageVC {
             vc.counterparty = identityKey ?? "self"
@@ -170,10 +185,11 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
         }
     }
 }
+
 extension CounterpartyVC: ImagePickerDelegate {
 
     func didSelect(image: UIImage?) {
-        self.secureQRCode = image!
+        self.secureQRCode = image
         if ((image) != nil) {
             let detector:CIDetector=CIDetector(ofType: CIDetectorTypeQRCode, context: nil, options: [CIDetectorAccuracy:CIDetectorAccuracyHigh])!
             let ciImage:CIImage=CIImage(image:self.secureQRCode!)!
@@ -184,7 +200,7 @@ extension CounterpartyVC: ImagePickerDelegate {
                 message += feature.messageString!
             }
             
-            if message=="" {
+            if (message == "") {
                 print("nothing")
             } else {
                 addInstantMessageService(to: contactIdentifier!, identityKey: message)

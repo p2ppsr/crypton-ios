@@ -902,8 +902,7 @@
                                 <state key="normal" title="Button"/>
                                 <buttonConfiguration key="configuration" style="plain" title="Select Recipient"/>
                                 <connections>
-                                    <action selector="selectRecipient:" destination="yGT-pk-7xU" eventType="touchUpInside" id="Sxd-tO-ifT"/>
-                                    <action selector="selectRecipientWithSender:" destination="mYc-s2-0GK" eventType="touchUpInside" id="6MU-K9-aN0"/>
+                                    <action selector="selectCounterpartyWithSender:" destination="mYc-s2-0GK" eventType="touchUpInside" id="ADu-rS-rDg"/>
                                 </connections>
                             </button>
                             <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="self" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="eVz-t6-OGA">
@@ -1049,12 +1048,11 @@
                                 <textInputTraits key="textInputTraits" autocapitalizationType="sentences"/>
                             </textView>
                             <button opaque="NO" contentMode="scaleToFill" contentHorizontalAlignment="center" contentVerticalAlignment="center" buttonType="system" lineBreakMode="middleTruncation" translatesAutoresizingMaskIntoConstraints="NO" id="hQY-cA-rNV">
-                                <rect key="frame" x="123" y="408.66666666666669" width="147" height="34.666666666666686"/>
+                                <rect key="frame" x="131" y="408.66666666666669" width="131" height="34.666666666666686"/>
                                 <state key="normal" title="Button"/>
-                                <buttonConfiguration key="configuration" style="plain" title="Select Recipient"/>
+                                <buttonConfiguration key="configuration" style="plain" title="Select Sender"/>
                                 <connections>
-                                    <action selector="selectRecipient:" destination="yGT-pk-7xU" eventType="touchUpInside" id="x6A-s5-wql"/>
-                                    <action selector="selectRecipientWithSender:" destination="7eN-Mw-iMQ" eventType="touchUpInside" id="mrv-mj-cqi"/>
+                                    <action selector="selectCounterpartyWithSender:" destination="7eN-Mw-iMQ" eventType="touchUpInside" id="83Y-kw-4z5"/>
                                 </connections>
                             </button>
                             <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="self" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="gzk-Uo-hTY">
