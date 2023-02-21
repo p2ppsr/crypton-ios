@@ -8,8 +8,8 @@
 import Foundation
 import UIKit
 import BabbageSDK
-
 import FLAnimatedImage
+import AVFoundation
 
 class MainVC: UIViewController, BabbageDelegate {
     
@@ -20,6 +20,11 @@ class MainVC: UIViewController, BabbageDelegate {
     
     var contactIdentifier:String?
     var loadingIndicator:UIActivityIndicatorView!
+    
+    var backgroundAudioPlayer = AVAudioPlayer()
+//    var sfxPlayer = AVAudioPlayer()
+    var soundButton: UIBarButtonItem!
+    var isSoundOn: Bool = true
     
     @IBAction func getInfo(_ sender: Any) {
         Task.init {
@@ -83,16 +88,47 @@ class MainVC: UIViewController, BabbageDelegate {
             // Present alert to user
             self.present(dialogMessage, animated: true, completion: nil)
         }
+        
+        // Fetch the Sound data set.
+        if let asset = NSDataAsset(name:"PhantomFromSpace"){
+           do {
+                 // Use NSDataAsset's data property to access the audio file stored in Sound.
+                  backgroundAudioPlayer = try AVAudioPlayer(data:asset.data, fileTypeHint:"mp3")
+                 // Play the above sound file.
+               backgroundAudioPlayer.play()
+           } catch let error as NSError {
+                 print(error.localizedDescription)
+           }
+        }
+        
+        // Create a sound button
+        soundButton = UIBarButtonItem(title: "", style: .plain, target: self, action: #selector(toggleSound))
+        let imageName = isSoundOn ? "soundOn" : "soundOff"
+        soundButton.image = UIImage(named: imageName)
+        navigationItem.rightBarButtonItem = soundButton
     }
     
+    @objc func toggleSound() {
+         isSoundOn = !isSoundOn
+         let imageName = isSoundOn ? "soundOn" : "soundOff"
+         soundButton.image = UIImage(named: imageName)
+         
+         // Toggle sound here
+         if isSoundOn {
+             // Turn on sound
+             backgroundAudioPlayer.play()
+         } else {
+             // Turn off sound
+             backgroundAudioPlayer.stop()
+         }
+     }
+    
     override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
-//        guard let vc = segue.destination as? CryptoVC else { return }
-//        if let button = sender as? UIButton {
-//            if (button.tag == 0){
-//                vc.action = "Encrypt"
-//            } else {
-//                vc.action = "Decrypt"
-//            }
+//        do {
+//            sfxPlayer = try AVAudioPlayer(data:NSDataAsset(name:"buttonClick")!.data, fileTypeHint:"mp3")
+//            sfxPlayer.play()
+//        } catch{
+//            print(error)
 //        }
     }
 }

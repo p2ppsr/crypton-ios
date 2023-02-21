@@ -24,7 +24,7 @@ class PlaceholderTextView: UITextView {
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         self.text = placeholder
-        self.textColor = .lightGray
+        self.textColor = .lightText
         self.delegate = self
     }
     

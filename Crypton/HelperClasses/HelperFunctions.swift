@@ -23,11 +23,15 @@ func generateQRCode(from string: String, centerImage: UIImage?, color: String? =
       // Convert the image to a format that can be saved on the device
       if let output = filter.outputImage?.transformed(by: transform) {
           
+          let red: CGFloat = 0x90 / 255.0 // 131/255
+          let green: CGFloat = 0xff / 255.0 //228/255
+          let blue: CGFloat = 0xde / 255.0 //150/255
+          
           let colorFilter = CIFilter(name: "CIFalseColor")
           if (color == "CryptonGreen") {
               colorFilter?.setDefaults()
               colorFilter?.setValue(output, forKey: "inputImage")
-              colorFilter?.setValue(CIColor(red: 131/255, green: 228/255, blue: 150/255), forKey: "inputColor0")
+              colorFilter?.setValue(CIColor(red: red, green: green, blue: blue), forKey: "inputColor0")
               colorFilter?.setValue(CIColor(red: 0, green: 0, blue: 0), forKey: "inputColor1")
           }
           
