@@ -37,7 +37,9 @@ class GuidePage: UIViewController {
         // Instantiate the navigation controller and set its root view controller
         let navController = UINavigationController(rootViewController: rootViewController)
 
-        // Set the new navigation controller as the root view controller of the window
-        window.rootViewController = navController
+        // Set the new navigation controller as the root view controller of the window with a transition animation
+        UIView.transition(with: window, duration: 0.2, options: .transitionCrossDissolve, animations: {
+            window.rootViewController = navController
+        }, completion: nil)
     }
 }

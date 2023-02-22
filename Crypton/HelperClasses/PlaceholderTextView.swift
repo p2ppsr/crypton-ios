@@ -26,6 +26,9 @@ class PlaceholderTextView: UITextView {
         self.text = placeholder
         self.textColor = .lightText
         self.delegate = self
+        
+        // Add an observer to scroll the content up when editing
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(notification:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
     }
     
     // Dismiss the keyboard only if the textField is first responder.
@@ -37,23 +40,40 @@ class PlaceholderTextView: UITextView {
             self.becomeFirstResponder()
         }
     }
+    
+    // Callback for moving the keyboard content up
+    @objc func keyboardWillChangeFrame(notification: Notification) {
+        guard let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
+            return
+        }
+        
+        let keyboardHeight = (self.superview?.bounds.height ?? 1000) - keyboardFrame.origin.y
+        let contentInset = UIEdgeInsets(top: 0, left: 0, bottom: keyboardHeight, right: 0)
+        
+        self.contentInset = contentInset
+        self.scrollIndicatorInsets = contentInset
+        
+        let bottomOffset = CGPoint(x: 0, y: 0)
+        self.setContentOffset(bottomOffset, animated: true)
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
 }
 
+// Extensions to add a placeholder text to the view
 extension PlaceholderTextView: UITextViewDelegate {
     func textViewDidBeginEditing(_ textView: UITextView) {
         if textView.text == placeholder {
             textView.text = ""
         }
-        
-        textView.frame = CGRect(x: textView.frame.origin.x, y: textView.frame.origin.y - repositionAmount, width: textView.frame.width, height: textView.frame.height - decreaseAmount)
     }
-    
     func textViewDidEndEditing(_ textView: UITextView) {
         if textView.text == "" {
             textView.text = placeholder
             textView.textColor = .lightGray
         }
-        textView.frame = CGRect(x: textView.frame.origin.x, y: textView.frame.origin.y + repositionAmount, width: textView.frame.width, height: textView.frame.height + decreaseAmount)
     }
     func textViewShouldEndEditing(_ textView: UITextView) -> Bool {
         textView.resignFirstResponder()

@@ -10,6 +10,7 @@ import UIKit
 import BabbageSDK
 import GenericJSON
 import FLAnimatedImage
+import AVFoundation
 
 class MessageVC: UIViewController, UITextViewDelegate {
     
@@ -19,6 +20,7 @@ class MessageVC: UIViewController, UITextViewDelegate {
     var counterparty:String = "self"
     var sdk:BabbageSDK = BabbageSDK(webviewStartURL: "https://mobile-portal.babbage.systems") // TODO: Switch to prod before release
     var loadingAnimationView:FLAnimatedImageView!
+    var sfxAudioPlayer = AVAudioPlayer()
     
     @IBOutlet var messageTextView: PlaceholderTextView!
     @IBOutlet var nextButton: UIButton!
@@ -27,12 +29,29 @@ class MessageVC: UIViewController, UITextViewDelegate {
         super.viewDidLoad()
         // Note: The animation view must be added before the webview to still show permission popups
         loadingAnimationView = addLoadingAnimation(parentView: view)
+        loadingAnimationView.isHidden = true
         sdk.setParent(parent: self)
         
         messageTextView.placeholder = "Enter the message you would like to encrypt"
         messageTextView.text = "Enter the message you would like to encrypt"
         
         messageTextView.addDoneButton(title: "Done", target: self, selector: #selector(tapDone(sender:)))
+        
+        // Fetch the Sound data set.
+        if let asset = NSDataAsset(name:"encryptSound") {
+           do {
+               // Use NSDataAsset's data property to access the audio file stored in Sound.
+               sfxAudioPlayer = try AVAudioPlayer(data:asset.data, fileTypeHint:"mp3")
+               sfxAudioPlayer.volume = 0.1
+           } catch let error as NSError {
+                 print(error.localizedDescription)
+           }
+        }
+    }
+    
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        sfxAudioPlayer.stop()
     }
 
     @objc func tapDone(sender: Any) {
@@ -43,21 +62,22 @@ class MessageVC: UIViewController, UITextViewDelegate {
         
         if (messageTextView.text == messageTextView.placeholder) {
             // Create a new alert
-            let dialogMessage = UIAlertController(title: "Error", message: "Please enter a message!", preferredStyle: .alert)
-            dialogMessage.addAction(UIAlertAction(title: "OK", style: .default, handler: { (action) -> Void in
-             }))
-            // Present alert to user
-            self.present(dialogMessage, animated: true, completion: nil)
+            showCustomAlert(vc: self, title: "Error", description: "Please enter a message to encrypt!")
             return
         }
+        if (userDefaults.bool(forKey: "soundDisabled") == false) {
+            sfxAudioPlayer.currentTime = 0
+            sfxAudioPlayer.play()
+        }
 
-        loadingAnimationView.startAnimating()
-        loadingAnimationView.isHidden = false
-
-        Task.detached { [self] in
-            let startTime = DispatchTime.now()
-
+        Task.init {
             do {
+                // Configure animation view (note: does not loop forever)
+                loadingAnimationView.runLoopMode = RunLoop.Mode.common
+                self.loadingAnimationView.isHidden = false
+                loadingAnimationView.startAnimating()
+                let startTime = DispatchTime.now()
+                
                 let encryptedText = try await sdk.encrypt(plaintext: messageTextView.text, protocolID: PROTOCOL_ID, keyID: KEY_ID, counterparty: counterparty)
                 
                 let endTime = DispatchTime.now()
@@ -67,12 +87,15 @@ class MessageVC: UIViewController, UITextViewDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + (goalTime - elapsedTime)) {
                     self.loadingAnimationView.stopAnimating()
                     self.loadingAnimationView.isHidden = true
-                    
                     self.messageTextView.text = encryptedText
+                    
+                    // Stop the encryption sound if playing
+                    if (self.sfxAudioPlayer.isPlaying) {
+                        self.sfxAudioPlayer.stop()
+                    }
                     
                     if let vc = UIStoryboard(name: "Main", bundle: nil).instantiateViewController(withIdentifier: "resultsVC") as? ResultsVC {
                         vc.secureQRCode = generateQRCode(from: encryptedText, centerImage: UIImage(named: "encryptedQRLogo"))
-                        // Code to be executed after a delay of 1 second
                         self.navigationController?.pushViewController(vc, animated: true)
                     }
                 }

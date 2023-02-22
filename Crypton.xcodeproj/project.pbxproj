@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		40005EF429A45A1F00F9A4F4 /* BabbageSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 40005EF329A45A1F00F9A4F4 /* BabbageSDK */; };
+		40005EF629A53C3D00F9A4F4 /* CustomAlertVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40005EF529A53C3D00F9A4F4 /* CustomAlertVC.swift */; };
 		4036BAD0299A8EB400C494E2 /* HelperFunctions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4036BACF299A8EB400C494E2 /* HelperFunctions.swift */; };
 		4054E21D29A18BFC00267EC9 /* QRScannerVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */; };
 		4054E21F29A1A03200267EC9 /* CounterpartyVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E21E29A1A03200267EC9 /* CounterpartyVC.swift */; };
@@ -52,6 +53,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		40005EF529A53C3D00F9A4F4 /* CustomAlertVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomAlertVC.swift; sourceTree = "<group>"; };
+		40005EF729A541E000F9A4F4 /* babbage-sdk-ios */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = "babbage-sdk-ios"; path = "../babbage-sdk-ios"; sourceTree = "<group>"; };
 		4036BACF299A8EB400C494E2 /* HelperFunctions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperFunctions.swift; sourceTree = "<group>"; };
 		4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerVC.swift; sourceTree = "<group>"; };
 		4054E21E29A1A03200267EC9 /* CounterpartyVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CounterpartyVC.swift; sourceTree = "<group>"; };
@@ -119,6 +122,7 @@
 				4036BACF299A8EB400C494E2 /* HelperFunctions.swift */,
 				40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */,
 				4099C8A229A318CA006905B2 /* LoadingAnimation.swift */,
+				40005EF529A53C3D00F9A4F4 /* CustomAlertVC.swift */,
 			);
 			path = HelperClasses;
 			sourceTree = "<group>";
@@ -146,6 +150,7 @@
 		4099C8A429A321DC006905B2 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
+				40005EF729A541E000F9A4F4 /* babbage-sdk-ios */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -356,6 +361,7 @@
 				4054E21D29A18BFC00267EC9 /* QRScannerVC.swift in Sources */,
 				4054E22129A1A44200267EC9 /* MessageVC.swift in Sources */,
 				40D664AC28D8EA6200CD67A8 /* UITest.xcdatamodeld in Sources */,
+				40005EF629A53C3D00F9A4F4 /* CustomAlertVC.swift in Sources */,
 				40ECDDDF2994827200BBCF97 /* ImagePicker.swift in Sources */,
 				40D664A228D8EA6200CD67A8 /* AppDelegate.swift in Sources */,
 				406D8BA5299B4E8800C8B04B /* PageController.swift in Sources */,
@@ -533,18 +539,18 @@
 		40D664CC28D8EA6300CD67A8 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon4;
+				ASSETCATALOG_COMPILER_APPICON_NAME = newAppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = 3YQ69SSGVS;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Crypton/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Crypton;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera required to scan QR code";
-				INFOPLIST_KEY_NSContactsUsageDescription = "Required to add a message recipient";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Required to add a message recipient/sender";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Access needed to save QR code";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen.storyboard;
@@ -557,7 +563,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.04;
+				MARKETING_VERSION = 1.06;
 				PRODUCT_BUNDLE_IDENTIFIER = com.projectbabbage.Crypton;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -572,18 +578,18 @@
 		40D664CD28D8EA6300CD67A8 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon4;
+				ASSETCATALOG_COMPILER_APPICON_NAME = newAppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = 3YQ69SSGVS;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Crypton/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Crypton;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera required to scan QR code";
-				INFOPLIST_KEY_NSContactsUsageDescription = "Required to add a message recipient";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Required to add a message recipient/sender";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Access needed to save QR code";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen.storyboard;
@@ -596,7 +602,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.04;
+				MARKETING_VERSION = 1.06;
 				PRODUCT_BUNDLE_IDENTIFIER = com.projectbabbage.Crypton;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

@@ -11,7 +11,15 @@ import UIKit
 import Contacts
 import ContactsUI
 
-class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNContactPickerDelegate, QRScannerDelegate  {
+class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNContactPickerDelegate, QRScannerDelegate, CustomAlertVCDelegate  {
+    func okButtonPressed(_ alert: CustomAlertVC, alertTag: Int) {
+        self.imagePicker.present(from: self.view)
+    }
+    
+    func cancelButtonPressed(_ alert: CustomAlertVC, alertTag: Int) {
+        print("Canceled")
+    }
+    
     @IBOutlet var nameLabel: UILabel?
     
     @IBOutlet var nextButton: UIButton!
@@ -162,15 +170,7 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
     func promptUserForIdentityKey() {
         DispatchQueue.main.async {
             // Create a new alert
-            let dialogMessage = UIAlertController(title: "New Counterparty", message: "Identity Key Not found!", preferredStyle: .alert)
-            dialogMessage.addAction(UIAlertAction(title: "Select QR Code", style: .default, handler: { (action) -> Void in
-                self.imagePicker.present(from: self.view)
-             }))
-            dialogMessage.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: { (action) -> Void in
-                // nothing
-             }))
-            // Present alert to user
-            self.present(dialogMessage, animated: true, completion: nil)
+            showCustomAlert(vc: self, title: "New Counterparty", singleButtonMode: false, description: "Identity Key Not found!", customOkayButtonLabel: "Select QR Code")
         }
     }
     

@@ -9,6 +9,7 @@ import Foundation
 import UIKit
 import BabbageSDK
 import GenericJSON
+import AVFoundation
 
 class DecryptorVC: UIViewController, UITextViewDelegate, QRScannerDelegate {
     
@@ -24,7 +25,7 @@ class DecryptorVC: UIViewController, UITextViewDelegate, QRScannerDelegate {
     var secureQRCode: UIImage?
     var imagePicker: ImagePicker!
     
-    var encryptedMessage:String?
+    var sfxAudioPlayer = AVAudioPlayer()
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -38,6 +39,17 @@ class DecryptorVC: UIViewController, UITextViewDelegate, QRScannerDelegate {
         
         self.imagePicker = ImagePicker(presentationController: self, delegate: self)
         self.imagePicker.present(from: self.view)
+        
+        // Fetch the Sound data set.
+        if let asset = NSDataAsset(name:"decryptSound") {
+           do {
+               // Use NSDataAsset's data property to access the audio file stored in Sound.
+               sfxAudioPlayer = try AVAudioPlayer(data:asset.data, fileTypeHint:"mp3")
+               sfxAudioPlayer.volume = 0.1
+           } catch let error as NSError {
+                 print(error.localizedDescription)
+           }
+        }
     }
     
     @objc func tapDone(sender: Any) {
@@ -45,28 +57,34 @@ class DecryptorVC: UIViewController, UITextViewDelegate, QRScannerDelegate {
     }
     
     func didScanQRCode(withData data: String) {
-        encryptedMessage = data
-        messageTextView.text = encryptedMessage
+        messageTextView.text = data
     }
     
     @IBAction func decrypt(_ sender: Any) {
         
         if (messageTextView.text == messageTextView.placeholder) {
             // Create a new alert
-            let dialogMessage = UIAlertController(title: "Error", message: "Please enter a message!", preferredStyle: .alert)
-            dialogMessage.addAction(UIAlertAction(title: "OK", style: .default, handler: { (action) -> Void in
-             }))
-            // Present alert to user
-            self.present(dialogMessage, animated: true, completion: nil)
+            showCustomAlert(vc: self, title: "Error", description: "Please enter a message to decrypt!")
             return
+        }
+        
+        if (userDefaults.bool(forKey: "soundDisabled") == false) {
+            sfxAudioPlayer.currentTime = 0
+            sfxAudioPlayer.play()
         }
         
         Task.init {
             do {
-                messageTextView.text = try await sdk.decrypt(ciphertext: encryptedMessage!, protocolID: PROTOCOL_ID, keyID: KEY_ID, counterparty: counterparty)
+                messageTextView.text = try await sdk.decrypt(ciphertext: messageTextView.text!, protocolID: PROTOCOL_ID, keyID: KEY_ID, counterparty: counterparty)
             } catch {
                 showErrorMessage(vc: self, error: error)
             }
+//
+//            // Stop the encryption sound if playing
+//            if (self.sfxAudioPlayer.isPlaying) {
+//                self.sfxAudioPlayer.stop()
+//                self.sfxAudioPlayer.currentTime = 0
+//            }
         }
     }
     @IBAction func scanQRCode(_ sender: Any) {
@@ -88,28 +106,10 @@ extension DecryptorVC: ImagePickerDelegate {
                 message += feature.messageString!
             }
             
-            if message=="" {
+            if message == "" {
                 print("nothing")
-            }else{
-                print("message: \(message)")
+            } else {
                 messageTextView.text = message
-                encryptedMessage = message
-//                Task.init {
-//                    if (isSelectingRecipient) {
-//                        counterpartyTextField.text = message
-//                    } else {
-//                        do {
-//                            textView.text = try await sdk.decrypt(ciphertext: message, protocolID: PROTOCOL_ID, keyID: KEY_ID, counterparty: getCounterparty())
-//                        } catch {
-//                            // Create a new alert
-//                            let dialogMessage = UIAlertController(title: "Error", message: "Decryption failed!", preferredStyle: .alert)
-//                            dialogMessage.addAction(UIAlertAction(title: "OK", style: .default, handler: { (action) -> Void in
-//                             }))
-//                            // Present alert to user
-//                            self.present(dialogMessage, animated: true, completion: nil)
-//                        }
-//                    }
-//                }
             }
         }
     }

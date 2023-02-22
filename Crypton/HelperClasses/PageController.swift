@@ -40,7 +40,7 @@ class PageController: UIPageViewController, UIPageViewControllerDataSource, UIPa
         
         let pageControl = UIPageControl.appearance(whenContainedInInstancesOf: [UIPageViewController.self])
         pageControl.pageIndicatorTintColor = UIColor.gray
-        pageControl.currentPageIndicatorTintColor = UIColor(red: 131/255, green: 228/255, blue: 150/255, alpha: 1)
+        pageControl.currentPageIndicatorTintColor = UIColor(red: defaultRed, green: defaultGreen, blue: defaultBlue, alpha: 1)
         pageControl.backgroundColor = UIColor.clear
 
         let pageControlSize = pageControl.size(forNumberOfPages: 2)

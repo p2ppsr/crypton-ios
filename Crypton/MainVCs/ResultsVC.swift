@@ -39,11 +39,7 @@ class ResultsVC: UIViewController {
         activityViewController.completionWithItemsHandler = { (activityType, completed, returnedItems, error) in
             if completed {
                 // Create a new alert
-                let dialogMessage = UIAlertController(title: "Shared", message: "Encrypted message shared!", preferredStyle: .alert)
-                dialogMessage.addAction(UIAlertAction(title: "OK", style: .default, handler: { (action) -> Void in
-                 }))
-                // Present alert to user
-                self.present(dialogMessage, animated: true, completion: nil)
+                showCustomAlert(vc: self, title: "Shared", description: "Encrypted message shared!")
             }
         }
     }

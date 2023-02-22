@@ -16,17 +16,21 @@
                         <rect key="frame" x="0.0" y="0.0" width="390" height="844"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <subviews>
-                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFill" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="background2" translatesAutoresizingMaskIntoConstraints="NO" id="ZHc-Ph-gSO">
-                                <rect key="frame" x="0.0" y="0.0" width="390" height="844"/>
-                            </imageView>
+                            <button opaque="NO" contentMode="scaleToFill" enabled="NO" contentHorizontalAlignment="center" contentVerticalAlignment="center" buttonType="system" lineBreakMode="middleTruncation" translatesAutoresizingMaskIntoConstraints="NO" id="pa4-gr-Vxj">
+                                <rect key="frame" x="52" y="261" width="286" height="232"/>
+                                <state key="normal" title="Button"/>
+                                <buttonConfiguration key="configuration" style="plain">
+                                    <backgroundConfiguration key="background" image="cryptonHeader" imageContentMode="scaleAspectFit"/>
+                                </buttonConfiguration>
+                            </button>
                         </subviews>
                         <viewLayoutGuide key="safeArea" id="6Tk-OE-BBY"/>
                         <color key="backgroundColor" red="0.17651120580808077" green="0.17651120580808077" blue="0.17651120580808077" alpha="0.0" colorSpace="custom" customColorSpace="sRGB"/>
                         <constraints>
-                            <constraint firstItem="ZHc-Ph-gSO" firstAttribute="top" secondItem="Ze5-6b-2t3" secondAttribute="topMargin" constant="-47" id="L4I-Gr-ToN"/>
-                            <constraint firstItem="ZHc-Ph-gSO" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="ViR-zy-NCP"/>
-                            <constraint firstItem="ZHc-Ph-gSO" firstAttribute="leading" secondItem="6Tk-OE-BBY" secondAttribute="leading" id="qlh-1T-QQ9"/>
-                            <constraint firstItem="ZHc-Ph-gSO" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="zBS-aI-yzK"/>
+                            <constraint firstItem="6Tk-OE-BBY" firstAttribute="bottom" secondItem="pa4-gr-Vxj" secondAttribute="bottom" constant="317" id="0jm-0R-YMW"/>
+                            <constraint firstItem="pa4-gr-Vxj" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="Eq1-RL-zMc"/>
+                            <constraint firstItem="pa4-gr-Vxj" firstAttribute="leading" secondItem="6Tk-OE-BBY" secondAttribute="leading" constant="52" id="EuX-EE-lns"/>
+                            <constraint firstItem="pa4-gr-Vxj" firstAttribute="top" secondItem="6Tk-OE-BBY" secondAttribute="top" constant="214" id="YKF-J5-gpX"/>
                         </constraints>
                     </view>
                 </viewController>
@@ -36,6 +40,6 @@
         </scene>
     </scenes>
     <resources>
-        <image name="background2" width="2340" height="5064"/>
+        <image name="cryptonHeader" width="1200" height="643"/>
     </resources>
 </document>
