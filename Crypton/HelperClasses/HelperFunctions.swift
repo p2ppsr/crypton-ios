@@ -11,7 +11,7 @@ import CoreImage
 import BabbageSDK
 
 // The larger the number the smaller the logo
-let logoScaleFactor:CGFloat = 230.0
+let logoScaleFactor:CGFloat = 285.0
 let defaultRed: CGFloat = 0x00 / 255.0 // 131/255
 let defaultGreen: CGFloat = 0xeb / 255.0 //228/255
 let defaultBlue: CGFloat = 0xb3 / 255.0 //150/255
