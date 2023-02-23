@@ -19,6 +19,7 @@
 		406D8BB7299C19CF00C8B04B /* Reachability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 406D8BB6299C19CF00C8B04B /* Reachability.swift */; };
 		40707AD7299AC26500DF14D0 /* SettingsVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40707AD6299AC26500DF14D0 /* SettingsVC.swift */; };
 		40707AD9299AC91500DF14D0 /* PlaceholderTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */; };
+		408FCF7D29A7FA8900E2E3B3 /* ContactsVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 408FCF7C29A7FA8900E2E3B3 /* ContactsVC.swift */; };
 		4099C8A129A309CA006905B2 /* FLAnimatedImage in Frameworks */ = {isa = PBXBuildFile; productRef = 4099C8A029A309CA006905B2 /* FLAnimatedImage */; };
 		4099C8A329A318CA006905B2 /* LoadingAnimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4099C8A229A318CA006905B2 /* LoadingAnimation.swift */; };
 		4099C8B129A434D4006905B2 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 4099C8AF29A434D4006905B2 /* Main.storyboard */; };
@@ -65,6 +66,7 @@
 		406D8BB6299C19CF00C8B04B /* Reachability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Reachability.swift; sourceTree = "<group>"; };
 		40707AD6299AC26500DF14D0 /* SettingsVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsVC.swift; sourceTree = "<group>"; };
 		40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderTextView.swift; sourceTree = "<group>"; };
+		408FCF7C29A7FA8900E2E3B3 /* ContactsVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsVC.swift; sourceTree = "<group>"; };
 		4099C8A229A318CA006905B2 /* LoadingAnimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadingAnimation.swift; sourceTree = "<group>"; };
 		4099C8B029A434D4006905B2 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		40C1731D2995A9760003D482 /* ResultsVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsVC.swift; sourceTree = "<group>"; };
@@ -123,6 +125,7 @@
 				40707AD8299AC91500DF14D0 /* PlaceholderTextView.swift */,
 				4099C8A229A318CA006905B2 /* LoadingAnimation.swift */,
 				40005EF529A53C3D00F9A4F4 /* CustomAlertVC.swift */,
+				408FCF7C29A7FA8900E2E3B3 /* ContactsVC.swift */,
 			);
 			path = HelperClasses;
 			sourceTree = "<group>";
@@ -354,6 +357,7 @@
 				406D8BAB299B605200C8B04B /* GuidePage.swift in Sources */,
 				4099C8A329A318CA006905B2 /* LoadingAnimation.swift in Sources */,
 				4036BAD0299A8EB400C494E2 /* HelperFunctions.swift in Sources */,
+				408FCF7D29A7FA8900E2E3B3 /* ContactsVC.swift in Sources */,
 				40C17320299699A80003D482 /* MainVC.swift in Sources */,
 				40C1731E2995A9760003D482 /* ResultsVC.swift in Sources */,
 				4054E22529A1B5EE00267EC9 /* DecryptorVC.swift in Sources */,

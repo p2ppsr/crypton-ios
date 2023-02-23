@@ -21,6 +21,8 @@ let identityGreen: CGFloat = 0xea / 255.0 //228/255
 let identityBlue: CGFloat = 0xb2 / 255.0 //150/255
 let userDefaults = UserDefaults.standard
 
+let defaultTint = UIColor(red: defaultRed, green: defaultGreen, blue: defaultBlue, alpha: 1.0)
+
 func generateQRCode(from string: String, centerImage: UIImage?, color: String? = "Default") -> UIImage? {
     let data = string.data(using: String.Encoding.ascii)
     

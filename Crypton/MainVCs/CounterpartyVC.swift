@@ -10,8 +10,40 @@ import UIKit
 
 import Contacts
 import ContactsUI
+import BabbageSDK
 
-class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNContactPickerDelegate, QRScannerDelegate, CustomAlertVCDelegate  {
+class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNContactPickerDelegate, ContactsViewControllerDelegate, QRScannerDelegate, CustomAlertVCDelegate  {
+    
+    func didSelectAddContact() {
+        addNewContact()
+    }
+    
+    func didSelectContact(_ contact: CNContact, vc: UIViewController) {
+        // Get the selected contacts name and look for MetaNet Identity Key
+        let firstName = contact.givenName
+        let lastName = contact.familyName
+        self.contactIdentifier = contact.identifier
+        
+        let storyboard = UIStoryboard(name: "Main", bundle: nil)
+        let qrScannerVC = storyboard.instantiateViewController(withIdentifier: "qrScannerVC") as! QRScannerVC
+        qrScannerVC.delegate = self
+        
+        // Check if an existing MetaNet Identity Key is present on the contact
+        let metanetIdentityKey = contact.instantMessageAddresses.filter {
+            $0.value.service == "MetaNet Identity Key"
+        }
+        if (((metanetIdentityKey.first?.value.username)) != nil) {
+            identityKey = (metanetIdentityKey.first?.value.username) as String?
+            nameLabel?.text = firstName + " " + lastName
+            nextButton.isHidden = false
+        } else {
+            isNewContact = true
+            // Dismiss the current vc so the alert vc can be displayed
+            promptUserForIdentityKey()
+        }
+        self.dismiss(animated: true )
+    }
+    
     func okButtonPressed(_ alert: CustomAlertVC, alertTag: Int) {
         self.imagePicker.present(from: self.view)
     }
@@ -43,26 +75,24 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
     
     @IBAction func selectCounterparty(sender: UIButton) {
         
-        // Cnfigure the ContactPickerViewController
-        let picker = CNContactPickerViewController()
-        picker.delegate = self
-        picker.displayedPropertyKeys = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey, CNContactEmailAddressesKey, CNContactInstantMessageAddressesKey]
-        picker.predicateForEnablingContact = NSPredicate(value: true)
+        let contactsVC = self.storyboard?.instantiateViewController(withIdentifier: "ContactsVC") as! ContactsViewController
+        contactsVC.delegate = self
+        let newContactButton = UIBarButtonItem(barButtonSystemItem: .add, target: contactsVC, action: #selector(contactsVC.addNewContact))
+        newContactButton.tintColor = defaultTint
 
-        // Manually add a button for adding a new contact
-        if #available(iOS 15.0, *) {
-            let newContactButton = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addNewContact))
-            picker.navigationItem.rightBarButtonItem = newContactButton
-            let navigationController = UINavigationController(rootViewController: picker)
-            navigationController.navigationBar.tintColor = .systemBlue
-            navigationController.navigationBar.prefersLargeTitles = false
-            navigationController.topViewController?.navigationItem.rightBarButtonItem = newContactButton
-            // Present a navigation controller with the newContact button
-            present(navigationController, animated: true, completion: nil)
-        } else {
-            // Below iOS 15.0 is not supported anyways
-            present(picker, animated: true, completion: nil)
-        }
+        // Create a new navigation controller with ContactsViewController as the root view controller
+        let navigationController = UINavigationController(rootViewController: contactsVC)
+        navigationController.modalPresentationStyle = .popover
+
+        let cancelButton = UIBarButtonItem(title: "Cancel", style: .plain, target: self, action: #selector(dismissView))
+        cancelButton.tintColor = defaultTint
+
+        // Set the newContactButton as the right bar button item for ContactsViewController
+        contactsVC.navigationItem.rightBarButtonItem = newContactButton
+        contactsVC.navigationItem.leftBarButtonItem = cancelButton
+
+        // Present the navigation controller
+        present(navigationController, animated: true, completion: nil)
     }
     
     // Display a new view controller for adding a new contact
@@ -77,6 +107,10 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
             self.isNewContact = true
             self.present(navController, animated: true, completion: nil)
         }
+    }
+    
+    @objc func dismissView() {
+        self.dismiss(animated: true)
     }
 
     // Callback function for when a user selects an existing contact
@@ -199,7 +233,7 @@ extension CounterpartyVC: ImagePickerDelegate {
             }
             
             if (message == "") {
-                print("nothing")
+                showErrorMessage(vc: self, error: BabbageError(description: "Unable to read QR code!"))
             } else {
                 addInstantMessageService(to: contactIdentifier!, identityKey: message)
                 nextButton.isHidden = false

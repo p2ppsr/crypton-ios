@@ -623,6 +623,62 @@
             </objects>
             <point key="canvasLocation" x="2661.8320610687024" y="-626.05633802816908"/>
         </scene>
+        <!--Contacts View Controller-->
+        <scene sceneID="qOq-Uc-NdK">
+            <objects>
+                <viewController storyboardIdentifier="ContactsVC" useStoryboardIdentifierAsRestorationIdentifier="YES" id="ybX-C4-Rd1" customClass="ContactsViewController" customModule="Crypton" customModuleProvider="target" sceneMemberID="viewController">
+                    <view key="view" contentMode="scaleToFill" id="40r-3h-qvw">
+                        <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                        <subviews>
+                            <tableView clipsSubviews="YES" contentMode="scaleToFill" alwaysBounceVertical="YES" dataMode="prototypes" style="plain" separatorStyle="default" rowHeight="-1" estimatedRowHeight="-1" sectionHeaderHeight="-1" estimatedSectionHeaderHeight="-1" sectionFooterHeight="-1" estimatedSectionFooterHeight="-1" translatesAutoresizingMaskIntoConstraints="NO" id="YVG-BI-qhZ">
+                                <rect key="frame" x="0.0" y="119" width="393" height="733"/>
+                                <color key="backgroundColor" red="0.13304923760000001" green="0.13304923760000001" blue="0.13304923760000001" alpha="0.89590231789999997" colorSpace="custom" customColorSpace="sRGB"/>
+                                <color key="sectionIndexBackgroundColor" red="0.13304923760000001" green="0.13304923760000001" blue="0.13304923760000001" alpha="0.89590231789999997" colorSpace="custom" customColorSpace="sRGB"/>
+                                <prototypes>
+                                    <tableViewCell clipsSubviews="YES" contentMode="scaleToFill" restorationIdentifier="Cell" insetsLayoutMarginsFromSafeArea="NO" selectionStyle="blue" hidesAccessoryWhenEditing="NO" indentationLevel="1" indentationWidth="0.0" reuseIdentifier="Cell" textLabel="Mlg-xL-VXI" rowHeight="72" style="IBUITableViewCellStyleDefault" id="gjV-2D-e4E">
+                                        <rect key="frame" x="0.0" y="50" width="393" height="72"/>
+                                        <autoresizingMask key="autoresizingMask"/>
+                                        <tableViewCellContentView key="contentView" opaque="NO" clipsSubviews="YES" multipleTouchEnabled="YES" contentMode="center" insetsLayoutMarginsFromSafeArea="NO" tableViewCell="gjV-2D-e4E" id="5NQ-FG-eIY">
+                                            <rect key="frame" x="0.0" y="0.0" width="393" height="72"/>
+                                            <autoresizingMask key="autoresizingMask"/>
+                                            <subviews>
+                                                <label opaque="NO" multipleTouchEnabled="YES" contentMode="left" insetsLayoutMarginsFromSafeArea="NO" text="Title" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" id="Mlg-xL-VXI">
+                                                    <rect key="frame" x="20" y="0.0" width="353" height="72"/>
+                                                    <autoresizingMask key="autoresizingMask"/>
+                                                    <fontDescription key="fontDescription" name="Menlo-Regular" family="Menlo" pointSize="19"/>
+                                                    <color key="textColor" white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+                                                    <nil key="highlightedColor"/>
+                                                </label>
+                                            </subviews>
+                                            <color key="backgroundColor" red="0.13304923760000001" green="0.13304923760000001" blue="0.13304923760000001" alpha="0.89590231789999997" colorSpace="custom" customColorSpace="sRGB"/>
+                                        </tableViewCellContentView>
+                                        <color key="backgroundColor" red="0.13304923760000001" green="0.13304923760000001" blue="0.13304923760000001" alpha="0.89590231789999997" colorSpace="custom" customColorSpace="sRGB"/>
+                                    </tableViewCell>
+                                </prototypes>
+                                <connections>
+                                    <outlet property="dataSource" destination="ybX-C4-Rd1" id="5bU-1s-sCg"/>
+                                    <outlet property="delegate" destination="ybX-C4-Rd1" id="4ci-kE-pbH"/>
+                                </connections>
+                            </tableView>
+                        </subviews>
+                        <viewLayoutGuide key="safeArea" id="LLY-O0-Fhg"/>
+                        <color key="backgroundColor" red="0.13304923760000001" green="0.13304923760000001" blue="0.13304923760000001" alpha="0.89590231789999997" colorSpace="custom" customColorSpace="sRGB"/>
+                        <constraints>
+                            <constraint firstItem="YVG-BI-qhZ" firstAttribute="top" secondItem="LLY-O0-Fhg" secondAttribute="top" constant="60" id="IGl-Wo-z7Y"/>
+                            <constraint firstItem="YVG-BI-qhZ" firstAttribute="centerX" secondItem="40r-3h-qvw" secondAttribute="centerX" id="XuE-CO-aWN"/>
+                            <constraint firstItem="YVG-BI-qhZ" firstAttribute="leading" secondItem="LLY-O0-Fhg" secondAttribute="leading" id="og5-Wj-s6M"/>
+                            <constraint firstAttribute="bottomMargin" secondItem="YVG-BI-qhZ" secondAttribute="bottom" constant="-34" id="tHk-Jd-76Q"/>
+                        </constraints>
+                    </view>
+                    <connections>
+                        <outlet property="tableView" destination="YVG-BI-qhZ" id="AuE-Um-p5q"/>
+                    </connections>
+                </viewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="w8g-aC-A8v" userLabel="First Responder" customClass="UIResponder" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="3507.6335877862593" y="-626.05633802816908"/>
+        </scene>
         <!--Guide Page-->
         <scene sceneID="nJ3-6y-HmU">
             <objects>
@@ -987,7 +1043,7 @@
                                     <constraint firstAttribute="height" constant="61" id="5f6-d5-LSI"/>
                                 </constraints>
                                 <state key="normal" title="Button"/>
-                                <buttonConfiguration key="configuration" style="filled" title="ENTER MANUALLY">
+                                <buttonConfiguration key="configuration" style="filled" title="CANCEL">
                                     <fontDescription key="titleFontDescription" name="Menlo-Bold" family="Menlo" pointSize="19"/>
                                     <color key="baseForegroundColor" red="0.88843513259999995" green="0.39844487369999998" blue="0.38882702149999998" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                                     <color key="baseBackgroundColor" red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="custom" customColorSpace="displayP3"/>
