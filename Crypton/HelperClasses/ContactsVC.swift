@@ -42,6 +42,9 @@ class ContactsViewController: UIViewController, UITableViewDataSource, UITableVi
         tableView.tableHeaderView = searchController.searchBar
         
         if let searchBarTextField = searchController.searchBar.value(forKey: "searchField") as? UITextField {
+            let font = UIFont(name: "Menlo", size: 17.0)
+              searchBarTextField.font = font
+            
             searchBarTextField.attributedPlaceholder = NSAttributedString(string: "Search Contacts", attributes: [NSAttributedString.Key.foregroundColor: UIColor.gray])
         }
         
@@ -85,7 +88,9 @@ class ContactsViewController: UIViewController, UITableViewDataSource, UITableVi
         var contacts = [CNContact]()
         do {
             try store.enumerateContacts(with: request) { contact, _ in
-                contacts.append(contact)
+                if (contact.givenName != "") {
+                    contacts.append(contact)
+                }
             }
         } catch {
             print("Error fetching contacts: \(error.localizedDescription)")
