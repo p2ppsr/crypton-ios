@@ -34,6 +34,13 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
         }
         if (((metanetIdentityKey.first?.value.username)) != nil) {
             identityKey = (metanetIdentityKey.first?.value.username) as String?
+            if (!isValidPublicKey(identityKey: identityKey ?? "")) {
+                self.dismiss(animated: true )
+                showErrorMessage(vc: self, error: BabbageError(description: "Invalid Identity Key Found! \n Please delete the invalid key using the contacts app."))
+                print("Invalid key")
+                return
+            }
+            
             nameLabel?.text = firstName + " " + lastName
             nextButton.isHidden = false
         } else {
@@ -65,6 +72,15 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
     override func viewDidLoad() {
         super.viewDidLoad()
         self.imagePicker = ImagePicker(presentationController: self, delegate: self)
+    }
+    
+    func isValidPublicKey(identityKey: String) -> Bool {
+        // Simple compressed public key validation
+        // Note: Future validation can be more extensive
+        if (identityKey != "" && identityKey.count == 66) {
+            return true
+        }
+        return false
     }
     
     // Callback function for scanning QR code
@@ -130,6 +146,12 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
         }
         if (((metanetIdentityKey.first?.value.username)) != nil) {
             identityKey = (metanetIdentityKey.first?.value.username) as String?
+            // Validate the existing identity key on the contact
+            if (!isValidPublicKey(identityKey: identityKey ?? "")) {
+                showErrorMessage(vc: self, error: BabbageError(description: "Invalid Identity Key!"))
+                print("Invalid key")
+                return
+            }
             nameLabel?.text = firstName + " " + lastName
             nextButton.isHidden = false
         } else {
@@ -168,6 +190,14 @@ class CounterpartyVC: UIViewController, CNContactViewControllerDelegate, CNConta
     
     // Modify a contact to include a MetaNet Identity Key
     func addInstantMessageService(to contactIdentifier: String, identityKey: String) {
+        // Make sure the identity key provided is valid
+        if (isValidPublicKey(identityKey: identityKey) == false) {
+            // Dismiss the current view before showing the alert
+            self.dismiss(animated: true )
+            showErrorMessage(vc: self, error: BabbageError(description: "Invalid Identity Key!"))
+            print("Invalid key")
+            return
+        }
         let store = CNContactStore()
         let keysToFetch = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey, CNContactInstantMessageAddressesKey]
         let fetchRequest = CNContactFetchRequest(keysToFetch: keysToFetch as [CNKeyDescriptor])

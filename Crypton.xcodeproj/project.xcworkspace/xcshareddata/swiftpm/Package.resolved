@@ -1,6 +1,15 @@
 {
   "pins" : [
     {
+      "identity" : "babbage-sdk-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/p2ppsr/babbage-sdk-ios",
+      "state" : {
+        "branch" : "master",
+        "revision" : "e4854aa10ad1ed5d3742073c236d08812cf9363e"
+      }
+    },
+    {
       "identity" : "flanimatedimage",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Flipboard/FLAnimatedImage",

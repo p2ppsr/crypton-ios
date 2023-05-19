@@ -64,14 +64,14 @@ class QRScannerVC: UIViewController, AVCapturePhotoCaptureDelegate, AVCaptureMet
             //Initialise the video preview layer and add it as a sublayer to the viewPreview view's layer
             videoPreviewLayer = AVCaptureVideoPreviewLayer(session: captureSession!)
             videoPreviewLayer?.videoGravity = AVLayerVideoGravity.resizeAspectFill
-            videoPreviewLayer?.frame = view.layer.bounds
+            videoPreviewLayer?.frame = previewView.layer.bounds
             previewView.layer.addSublayer(videoPreviewLayer!)
             
             self.captureSession?.startRunning()
             
             // Crop the cature window
             let captureMetadataOutput = AVCaptureMetadataOutput()
-            captureMetadataOutput.rectOfInterest = (videoPreviewLayer?.metadataOutputRectConverted(fromLayerRect: previewView.frame))!
+            captureMetadataOutput.rectOfInterest = (videoPreviewLayer?.metadataOutputRectConverted(fromLayerRect: videoPreviewLayer!.frame))!
             captureSession?.addOutput(captureMetadataOutput)
             
             // Set delegate and use the default dispatch queue to execute the call back

@@ -47,7 +47,7 @@ class PlaceholderTextView: UITextView {
             return
         }
         
-        let keyboardHeight = (self.superview?.bounds.height ?? 1000) - keyboardFrame.origin.y
+        let keyboardHeight = (self.superview?.bounds.height ?? 1000) - keyboardFrame.origin.y - 28
         let contentInset = UIEdgeInsets(top: 0, left: 0, bottom: keyboardHeight, right: 0)
         
         self.contentInset = contentInset

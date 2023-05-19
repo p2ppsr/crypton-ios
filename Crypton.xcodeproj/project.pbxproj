@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		40005EF429A45A1F00F9A4F4 /* BabbageSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 40005EF329A45A1F00F9A4F4 /* BabbageSDK */; };
 		40005EF629A53C3D00F9A4F4 /* CustomAlertVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40005EF529A53C3D00F9A4F4 /* CustomAlertVC.swift */; };
+		40364FB92A180973003172B3 /* BabbageSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 40364FB82A180973003172B3 /* BabbageSDK */; };
 		4036BAD0299A8EB400C494E2 /* HelperFunctions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4036BACF299A8EB400C494E2 /* HelperFunctions.swift */; };
 		4054E21D29A18BFC00267EC9 /* QRScannerVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */; };
 		4054E21F29A1A03200267EC9 /* CounterpartyVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4054E21E29A1A03200267EC9 /* CounterpartyVC.swift */; };
@@ -55,7 +55,6 @@
 
 /* Begin PBXFileReference section */
 		40005EF529A53C3D00F9A4F4 /* CustomAlertVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomAlertVC.swift; sourceTree = "<group>"; };
-		40005EF729A541E000F9A4F4 /* babbage-sdk-ios */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = "babbage-sdk-ios"; path = "../babbage-sdk-ios"; sourceTree = "<group>"; };
 		4036BACF299A8EB400C494E2 /* HelperFunctions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperFunctions.swift; sourceTree = "<group>"; };
 		4054E21C29A18BFC00267EC9 /* QRScannerVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerVC.swift; sourceTree = "<group>"; };
 		4054E21E29A1A03200267EC9 /* CounterpartyVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CounterpartyVC.swift; sourceTree = "<group>"; };
@@ -91,7 +90,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				40005EF429A45A1F00F9A4F4 /* BabbageSDK in Frameworks */,
+				40364FB92A180973003172B3 /* BabbageSDK in Frameworks */,
 				4099C8A129A309CA006905B2 /* FLAnimatedImage in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -153,7 +152,6 @@
 		4099C8A429A321DC006905B2 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				40005EF729A541E000F9A4F4 /* babbage-sdk-ios */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -231,7 +229,7 @@
 			name = Crypton;
 			packageProductDependencies = (
 				4099C8A029A309CA006905B2 /* FLAnimatedImage */,
-				40005EF329A45A1F00F9A4F4 /* BabbageSDK */,
+				40364FB82A180973003172B3 /* BabbageSDK */,
 			);
 			productName = UITest;
 			productReference = 40D6649E28D8EA6200CD67A8 /* Crypton.app */;
@@ -307,7 +305,7 @@
 			mainGroup = 40D6649528D8EA6200CD67A8;
 			packageReferences = (
 				4099C89F29A309CA006905B2 /* XCRemoteSwiftPackageReference "FLAnimatedImage" */,
-				40005EF229A45A1F00F9A4F4 /* XCRemoteSwiftPackageReference "babbage-sdk-ios" */,
+				40364FB72A180973003172B3 /* XCRemoteSwiftPackageReference "babbage-sdk-ios" */,
 			);
 			productRefGroup = 40D6649F28D8EA6200CD67A8 /* Products */;
 			projectDirPath = "";
@@ -547,7 +545,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = 3YQ69SSGVS;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Crypton/Info.plist;
@@ -567,7 +565,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.09;
+				MARKETING_VERSION = 1.10;
 				PRODUCT_BUNDLE_IDENTIFIER = com.projectbabbage.Crypton;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -586,7 +584,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = 3YQ69SSGVS;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Crypton/Info.plist;
@@ -606,7 +604,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.09;
+				MARKETING_VERSION = 1.10;
 				PRODUCT_BUNDLE_IDENTIFIER = com.projectbabbage.Crypton;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -736,7 +734,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		40005EF229A45A1F00F9A4F4 /* XCRemoteSwiftPackageReference "babbage-sdk-ios" */ = {
+		40364FB72A180973003172B3 /* XCRemoteSwiftPackageReference "babbage-sdk-ios" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/p2ppsr/babbage-sdk-ios";
 			requirement = {
@@ -755,9 +753,9 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		40005EF329A45A1F00F9A4F4 /* BabbageSDK */ = {
+		40364FB82A180973003172B3 /* BabbageSDK */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 40005EF229A45A1F00F9A4F4 /* XCRemoteSwiftPackageReference "babbage-sdk-ios" */;
+			package = 40364FB72A180973003172B3 /* XCRemoteSwiftPackageReference "babbage-sdk-ios" */;
 			productName = BabbageSDK;
 		};
 		4099C8A029A309CA006905B2 /* FLAnimatedImage */ = {

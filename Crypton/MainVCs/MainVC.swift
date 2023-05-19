@@ -33,6 +33,9 @@ class MainVC: UIViewController, BabbageDelegate, CustomAlertVCDelegate {
 //    var sfxPlayer = AVAudioPlayer()
     var soundButton: UIBarButtonItem!
     var isSoundOn: Bool = true
+    @IBOutlet var newMsgBtn: UIButton!
+    @IBOutlet var decryptBtn: UIButton!
+    @IBOutlet var identityKeyBtn: UIButton!
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -48,6 +51,10 @@ class MainVC: UIViewController, BabbageDelegate, CustomAlertVCDelegate {
         
         if userDefaults.bool(forKey: "hasLoggedInBefore") == false {
             loadingIndicator.startAnimating()
+            // Disable the main buttons before auth
+            newMsgBtn.isEnabled = false
+            decryptBtn.isEnabled = false
+            identityKeyBtn.isEnabled = false
         }
         
         sdk.setParent(parent: self)
@@ -103,6 +110,11 @@ class MainVC: UIViewController, BabbageDelegate, CustomAlertVCDelegate {
             if (userDefaults.bool(forKey: "hasLoggedInBefore") == false) {
                 userDefaults.set(true, forKey: "hasLoggedInBefore")
                 self.loadingIndicator?.stopAnimating()
+                
+                // Enable buttons on auth
+                newMsgBtn.isEnabled = true
+                decryptBtn.isEnabled = true
+                identityKeyBtn.isEnabled = true
             }
             
             if (userDefaults.bool(forKey: "soundDisabled") == false) {
