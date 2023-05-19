@@ -49,15 +49,16 @@ class MainVC: UIViewController, BabbageDelegate, CustomAlertVCDelegate {
         // Add the loading indicator to the view and start animating it
         self.view.addSubview(loadingIndicator)
         
+        sdk.setParent(parent: self)
+        
         if userDefaults.bool(forKey: "hasLoggedInBefore") == false {
+            // TODO: Improve UX by adding custom authentication animation
             loadingIndicator.startAnimating()
             // Disable the main buttons before auth
             newMsgBtn.isEnabled = false
             decryptBtn.isEnabled = false
             identityKeyBtn.isEnabled = false
         }
-        
-        sdk.setParent(parent: self)
         
         // Configure the nav bar tint
         self.navigationController?.navigationBar.titleTextAttributes = [NSAttributedString.Key.foregroundColor:  UIColor(red: defaultRed, green: defaultGreen, blue: defaultBlue, alpha: 1.0)]
