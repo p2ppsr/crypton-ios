@@ -16,7 +16,7 @@ class SettingsVC: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         // Get the identityKey which should be initialized by the mainVC
-        identityKeyImageView.image = generateQRCode(from: identityKey ?? "", centerImage: UIImage(named: "userIcon"), color: "CryptonGreen")
+        identityKeyImageView.image = generateQRCode(from: identityKey ?? "", centerImage: UIImage(named: "userIcon"), color: nil)
     }
     
     @IBAction func shareButton(_ sender: Any) {
