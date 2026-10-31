@@ -1,6 +1,71 @@
 import XCTest
 
 final class CryptonUITests: XCTestCase {
+    #if ME_BOB_SMOKE_TEST
+    // Opt-in only: install the separately built ME Bob app on Crypton-iOS-Test
+    // and run scripts/me-bob-launch-fixture.cjs, then dispatch the Bob scheme to
+    // http://localhost:18778/test/bob-route-check. Never creates a wallet.
+    @MainActor func testInstalledBobSchemeHandoff() throws {
+        let bob = XCUIApplication(bundleIdentifier:"app.metanet.explorer.bob")
+        let springboard = XCUIApplication(bundleIdentifier:"com.apple.springboard")
+        let open = springboard.buttons["Open"]
+        if open.waitForExistence(timeout:3) { open.tap() }
+        XCTAssertTrue(bob.wait(for:.runningForeground,timeout:30),"The Bob scheme must open the separate Bob app")
+        let notice = bob.alerts.buttons["Not Now"]
+        if notice.waitForExistence(timeout:3) { notice.tap() }
+        XCTAssertTrue(bob.wait(for:.runningForeground,timeout:5))
+        XCTAssertTrue(bob.staticTexts["Crypton ME Bob handoff verified"].waitForExistence(timeout:20))
+        let shot = XCTAttachment(screenshot:bob.screenshot()); shot.name = "Separate ME Bob scheme handoff without a wallet"; shot.lifetime = .keepAlways; add(shot)
+    }
+    #endif
+    @MainActor private func inboxApp(privateReceive:Bool = false,privateSend:Bool = false) async throws -> (XCUIApplication,String) {
+        let seeded:[String:Any]
+        do { _ = try await fixture("ack-mode",["mode":"normal"]); seeded = try await fixture("seed-inbox",["count":1]) }
+        catch { throw XCTSkip("Start disposable MessageBox fixtures") }
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--sdk-wallet-fixture","--messagebox-fixture","--reset-qa-outbox","--reset-qa-inbox"]; app.launch()
+        if privateReceive || privateSend {
+            app.buttons["Settings"].tap()
+            let target = app.switches[privateReceive ? "Received: decrypt once and remove" : "Sent: remove after confirmed delivery"]
+            for _ in 0..<5 where !target.isHittable { app.swipeUp() }
+            target.tap(); app.buttons["Crypton home"].tap()
+        }
+        return (app,(seeded["ids"] as! [String])[0])
+    }
+    @MainActor func testNativeInboxReceiveDecryptDismissAndRestore() async throws {
+        let (app,id) = try await inboxApp()
+        app.buttons["MessageBox inbox"].tap(); app.buttons["Refresh inbox"].tap()
+        let row = app.buttons["inbox-"+id]; XCTAssertTrue(row.waitForExistence(timeout:30)); row.tap()
+        app.buttons["Decrypt message"].tap()
+        XCTAssertTrue(app.staticTexts["inboxPlaintext"].waitForExistence(timeout:30))
+        XCTAssertEqual(app.staticTexts["inboxPlaintext"].label,"Android inbox fixture message 0")
+        let screenshot = XCTAttachment(screenshot:app.screenshot()); screenshot.name = "Native inbox decrypted disposable message"; screenshot.lifetime = .keepAlways; add(screenshot)
+        app.buttons["Dismiss on this device"].tap()
+        XCTAssertFalse(row.exists); app.switches["Show dismissed messages"].tap(); XCTAssertTrue(row.exists); row.tap()
+        app.buttons["Restore message"].tap(); XCTAssertTrue(row.exists)
+    }
+    @MainActor func testDisappearingInboxAutoRemovalOneViewAndBackgroundClear() async throws {
+        let (app,id) = try await inboxApp(privateReceive:true)
+        app.buttons["MessageBox inbox"].tap(); app.buttons["Refresh inbox"].tap()
+        let row = app.buttons["inbox-"+id]; XCTAssertTrue(row.waitForExistence(timeout:30)); row.tap()
+        app.buttons["Decrypt once and remove"].tap()
+        XCTAssertTrue(app.staticTexts["inboxPlaintext"].waitForExistence(timeout:30))
+        XCTAssertTrue(app.staticTexts["Server removal confirmed · no saved message copy"].exists)
+        let screenshot = XCTAttachment(screenshot:app.screenshot()); screenshot.name = "Private one-view message with verified removal (disposable)"; screenshot.lifetime = .keepAlways; add(screenshot)
+        XCTAssertFalse(app.buttons["Copy text"].exists); XCTAssertFalse(app.buttons["Share text"].exists)
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertFalse(app.staticTexts["inboxPlaintext"].exists); XCTAssertFalse(row.exists)
+    }
+    @MainActor func testDisappearingSendClearsAcceptedOutboxAndDisablesExports() async throws {
+        let (app,_) = try await inboxApp(privateSend:true)
+        app.buttons["New message"].tap(); app.buttons["Myself"].tap()
+        app.textViews["messageEditor"].tap(); app.textViews["messageEditor"].typeText("Disposable private send")
+        app.swipeUp(); app.buttons["Encrypt message"].tap()
+        XCTAssertTrue(app.staticTexts["Sealed and ready."].waitForExistence(timeout:20))
+        XCTAssertFalse(app.buttons["Share QR image"].exists); XCTAssertFalse(app.buttons["Copy text"].exists)
+        app.swipeUp(); app.buttons["Send with MessageBox"].tap(); app.buttons["Check delivery fee"].tap()
+        XCTAssertTrue(app.buttons["Review payment in wallet and send"].waitForExistence(timeout:30)); app.buttons["Review payment in wallet and send"].tap()
+        XCTAssertTrue(app.staticTexts["No deliveries yet. Encrypt a v2 message and choose Send with MessageBox."].waitForExistence(timeout:30))
+    }
     @MainActor func testRecipientSearchSelectSaveEncryptAndDeliveryPrefill() async throws {
         let recipient:[String:Any]
         do { recipient = try await fixture("recipient") } catch { throw XCTSkip("Start the disposable SDK fixture") }

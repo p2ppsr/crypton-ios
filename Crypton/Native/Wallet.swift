@@ -57,7 +57,7 @@ final class BoundedHTTP: NSObject, URLSessionDataDelegate {
     func call(_ method: String, _ args: JSON, raw: Bool = false) async throws -> Any {
         guard active == nil else { throw CryptonError("A wallet request is already in progress.") }
         let allowed = Set(["isAuthenticated","waitForAuthentication","getPublicKey","encrypt","decrypt","createHmac","verifyHmac","createSignature","verifySignature","createAction","listActions"])
-        guard allowed.contains(method) || RecipientDiscovery.methods.contains(method) else { throw CryptonError("Unsupported wallet request.") }
+        guard allowed.contains(method) || RecipientDiscovery.methods.contains(method) || (method == "getNetwork" && raw && args.isEmpty) else { throw CryptonError("Unsupported wallet request.") }
         let discovery = RecipientDiscovery.methods.contains(method)
         let params = discovery ? try RecipientDiscovery.arguments(method,args) : raw ? args : try Wire.walletArguments(method, args)
         let body = try jsonData(params)

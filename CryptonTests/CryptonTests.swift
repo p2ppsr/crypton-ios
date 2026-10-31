@@ -11,6 +11,39 @@ final class CryptonTests: XCTestCase {
         XCTAssertThrowsError(try Wire.identity("02" + String(repeating:"f",count:64)))
         XCTAssertThrowsError(try Wire.identity("04" + String(key.dropFirst(2))))
     }
+    @MainActor func testEncryptedInboxIsolationMinimalRemovalAndRetention() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:folder) }
+        let delivery = DeliveryStore(directory:folder.appendingPathComponent("outbox")), inbox = InboxStore(delivery:delivery,directory:folder.appendingPathComponent("inbox"))
+        let row:JSON = ["messageId":"test-message","sender":key,"envelope":try envelope()]
+        try inbox.merge(key,[row]); try inbox.flag(key,"test-message","read",true); try inbox.flag(key,"test-message","dismissed",true)
+        XCTAssertTrue(try inbox.list(key).isEmpty); XCTAssertEqual(try inbox.list(key,dismissed:true).count,1)
+        let other = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+        XCTAssertTrue(try inbox.list(other,dismissed:true).isEmpty)
+        var changed = row; changed["envelope"] = try jsonString(["protocol":"crypton","version":2,"sender":key,"ciphertext":Data(repeating:8,count:48).base64EncodedString()])
+        XCTAssertThrowsError(try inbox.merge(key,[changed])); XCTAssertThrowsError(try inbox.removed(key,"test-message"))
+        try inbox.decrypted(key,"test-message")
+        let pending = try inbox.get(key,"test-message")
+        XCTAssertEqual(Set(pending.keys),Set(["version","wallet","host","messageId","state"]))
+        try inbox.merge(key,[row]); XCTAssertTrue(InboxStore.pending(try inbox.get(key,"test-message")))
+        try inbox.removed(key,"test-message"); XCTAssertTrue(try inbox.list(key,dismissed:true).isEmpty)
+        let sent = try delivery.create(envelope:envelope(),key:key,recipient:key,name:"Private",disappear:true)
+        XCTAssertThrowsError(try delivery.cleanup(sent)); XCTAssertNotNil(try delivery.get(sent)["envelope"])
+    }
+    @MainActor func testInboxSessionCannotSpendImportAcknowledgeEarlyOrChangeProfile() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:folder) }
+        let inbox = InboxStore(delivery:DeliveryStore(directory:folder))
+        let session = try InboxSession(store:inbox,action:"refresh",wallet:key,id:"",offset:0,layer:"")
+        try session.beforeWallet("getPublicKey",["identityKey":true]); try session.returned("getPublicKey",["identityKey":true],["publicKey":key])
+        for method in ["createAction","internalizeAction","signAction","encrypt","listActions"] { XCTAssertThrowsError(try session.beforeWallet(method,[:])) }
+        XCTAssertThrowsError(try session.beforeHTTP(URL(string:inbox.host+"/acknowledgeMessage")!,"POST","{\"messageIds\":[\"test\"]}"))
+        XCTAssertThrowsError(try session.beforeHTTP(URL(string:"https://example.com/listMessages")!,"POST","{}"))
+        XCTAssertThrowsError(try session.returned("getPublicKey",["identityKey":true],["publicKey":"02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"]))
+        XCTAssertThrowsError(try InboxStore.messageID("../escape"))
+        let link = try MEWallet.handoffURL(URL(string:"http://localhost:42/cap/")!,scheme:"metanet-bob")
+        XCTAssertEqual(link.scheme,"metanet-bob")
+    }
     func testDiscoveryScopeAndUntrustedMetadata() throws {
         let lookup = try RecipientDiscovery.request("  bob@example.com  ")
         XCTAssertEqual(lookup.method,"discoverByAttributes")

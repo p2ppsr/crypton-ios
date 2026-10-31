@@ -3,6 +3,14 @@ import WebKit
 @testable import Crypton
 
 final class MEWalletTests: XCTestCase {
+    @MainActor func testBobWalletUsesSeparateSchemeWithoutOfficialFallback() async throws {
+        let opened = expectation(description:"Bob wallet opened"); var link:URL?
+        let wallet = MEWallet(open:{ link = $0; opened.fulfill(); return true },foreground:{false},backgroundTime:false,scheme:"metanet-bob")
+        let request = Task { try await wallet.call("getPublicKey",[:]) }
+        await fulfillment(of:[opened],timeout:5)
+        XCTAssertEqual(link?.scheme,"metanet-bob"); XCTAssertEqual(link?.host,"browser")
+        wallet.cancel(); do { _ = try await request.value; XCTFail("Cancelled Bob request returned") } catch { }
+    }
     @MainActor func testStrictHTTPParserAndDeepLink() throws {
         let first = Data("POST /cap/result HTTP/1.1\r\nHost: localhost:1\r\nContent-Length: 2\r\n\r\n{".utf8)
         XCTAssertNil(try LoopbackRequest.parse(first))
@@ -125,14 +133,150 @@ final class MEWalletTests: XCTestCase {
         }
     }
     func webView(_ webView:WKWebView,decidePolicyFor navigationAction:WKNavigationAction,decisionHandler:@escaping (WKNavigationActionPolicy) -> Void) {
-        if let url = navigationAction.request.url, url.scheme == "crypton-wallet" { active = true; _ = wallet.returned(url); decisionHandler(.cancel) }
+        if let url = navigationAction.request.url, url.scheme == "crypton-wallet" {
+            if wallet.returned(url) { active = true; wallet.resumed() }
+            decisionHandler(.cancel)
+        }
         else { decisionHandler(.allow) }
     }
-    func webView(_ webView:WKWebView,didFailProvisionalNavigation navigation:WKNavigation!,withError error:Error) { wallet.cancel() }
+    func webView(_ webView:WKWebView,didFailProvisionalNavigation navigation:WKNavigation!,withError error:Error) {
+        let error = error as NSError
+        // Loading the next capability page cancels the previous navigation. That
+        // old callback must not cancel the next wallet request.
+        if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled { return }
+        wallet.cancel()
+    }
     func close() { wallet.cancel(); web.configuration.userContentController.removeAllScriptMessageHandlers(); web.stopLoading() }
 }
 
 final class MEAndDeliveryIntegrationTests: XCTestCase {
+    @MainActor func testNativeMEInboxRetrievalDecryptionAndRemoval() async throws {
+        try await available()
+        _ = try await fixture("ack-mode",["mode":"normal"])
+        let seeded = try await fixture("seed-inbox",["count":1]), root = seeded["wallet"] as! String, id = (seeded["ids"] as! [String])[0]
+        let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:folder) }
+        let delivery = try DeliveryStore(directory:folder.appendingPathComponent("outbox"),fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
+        let page = MEPageFixture(); defer { page.close() }
+        let engine = CryptoEngine(wallet:page.wallet,store:delivery); defer { engine.close() }
+        _ = try await engine.inbox("refresh")
+        let opened = try await engine.inbox("openDiscard",wallet:root,id:id)
+        XCTAssertEqual((opened["content"] as? JSON)?["text"] as? String,"Android inbox fixture message 0")
+        XCTAssertEqual(opened["removed"] as? Bool,true); XCTAssertThrowsError(try engine.inboxStore.get(root,id))
+    }
+    @MainActor func testPrivateMessageClearsOnBackgroundAndRemovalRetriesAfterRestart() async throws {
+        try await available()
+        let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "crypton.private."+UUID().uuidString, defaults = UserDefaults(suiteName:suite)!
+        defer { defaults.removePersistentDomain(forName:suite); try? FileManager.default.removeItem(at:folder) }
+        let store = try DeliveryStore(directory:folder.appendingPathComponent("outbox"),fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
+        let wallet = JSONWallet(endpoint:URL(string:"http://127.0.0.1:18776")!)
+        defaults.set(false,forKey:"soundEnabled"); defaults.set(true,forKey:"guideSeen"); defaults.set(true,forKey:"disappearReceive")
+        _ = try await fixture("ack-mode",["mode":"reject"])
+        let seeded = try await fixture("seed-inbox",["count":1]), id = (seeded["ids"] as! [String])[0]
+        let model = AppModel(defaults:defaults,store:store,wallet:wallet)
+        func settle(_ model:AppModel) async throws {
+            for _ in 0..<400 { if !model.busy { return }; try await Task.sleep(nanoseconds:100_000_000) }
+            XCTFail("Inbox model timed out"); model.cancel()
+        }
+        model.active(true); model.receive("refresh"); try await settle(model)
+        model.showInboxMessage(id); model.receive("open"); try await settle(model)
+        XCTAssertNotNil(model.inboxContent); XCTAssertTrue(model.privateInboxView); XCTAssertFalse(model.privateRemoved)
+        model.active(false); XCTAssertNil(model.inboxContent); XCTAssertEqual(model.screen,.inbox)
+        _ = try await fixture("ack-mode",["mode":"normal"])
+        let restarted = AppModel(defaults:defaults,store:store,wallet:wallet)
+        defer { restarted.active(false); restarted.cancel() }
+        XCTAssertTrue(InboxStore.pending(try restarted.inboxStore.get(restarted.inboxWallet,id)))
+        restarted.active(true)
+        for _ in 0..<400 {
+            if (try? restarted.inboxStore.get(restarted.inboxWallet,id)) == nil { break }
+            try await Task.sleep(nanoseconds:100_000_000)
+        }
+        try await settle(restarted)
+        XCTAssertThrowsError(try restarted.inboxStore.get(restarted.inboxWallet,id))
+        XCTAssertTrue(restarted.inboxNotice.contains("Server removal confirmed"))
+    }
+    @MainActor func testNativeInboxPaginationPersistenceWalletBindingAndDecryption() async throws {
+        try await available()
+        let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:folder) }
+        let delivery = try DeliveryStore(directory:folder.appendingPathComponent("outbox"),fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
+        let inbox = InboxStore(delivery:delivery)
+        let wallet = JSONWallet(endpoint:URL(string:"http://127.0.0.1:18776")!)
+        let engine = CryptoEngine(wallet:wallet,store:delivery,inbox:inbox); defer { engine.close() }
+        for mode in ["derived","root"] {
+            var stage = "seed"
+            do {
+            let seeded = try await fixture("seed-inbox",["count":mode == "derived" ? 28 : 1,"mode":mode]), root = seeded["wallet"] as! String
+            stage = "first page"
+            let first = try await engine.inbox("refresh")
+            XCTAssertEqual(first["wallet"] as? String,root)
+            stage = "second page"
+            if first["hasMore"] as? Bool == true { _ = try await engine.inbox("refresh",wallet:root,offset:first["nextOffset"] as! Int) }
+            let id = (seeded["ids"] as! [String])[0]
+            stage = "open"
+            let opened = try await engine.inbox("open",wallet:root,id:id)
+            XCTAssertEqual((opened["content"] as? JSON)?["text"] as? String,"Android inbox fixture message 0")
+            stage = "dismiss"
+            try inbox.flag(root,id,"dismissed",true)
+            stage = "reopen"
+            let reopened = InboxStore(delivery:delivery)
+            XCTAssertEqual(try reopened.get(root,id)["dismissed"] as? Bool,true)
+            do { _ = try await engine.inbox("open",wallet:config["agent"] as! String,id:id); XCTFail("Different profile opened saved message") } catch { }
+            } catch { throw CryptonError("Inbox \(mode) at \(stage): \(error)") }
+        }
+    }
+    @MainActor func testDisappearingInboxVerifiedRemovalFailuresLostResponseAndNestedContent() async throws {
+        try await available()
+        let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:folder) }
+        let delivery = try DeliveryStore(directory:folder.appendingPathComponent("outbox"),fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
+        let inbox = InboxStore(delivery:delivery), wallet = JSONWallet(endpoint:URL(string:"http://127.0.0.1:18776")!)
+        let engine = CryptoEngine(wallet:wallet,store:delivery,inbox:inbox); defer { engine.close() }
+        for mode in ["normal","reject","retain","drop","badLookup"] {
+            _ = try await fixture("ack-mode",["mode":mode])
+            let seeded = try await fixture("seed-inbox",["count":1,"layer":mode == "normal"]), root = seeded["wallet"] as! String, id = (seeded["ids"] as! [String])[0]
+            _ = try await engine.inbox("refresh")
+            let opened = try await engine.inbox("openDiscard",wallet:root,id:id)
+            if mode == "normal" {
+                let content = opened["content"] as! JSON
+                let inner = try await engine.inbox("layer",wallet:root,layer:content["envelope"] as! String)
+                XCTAssertEqual((inner["content"] as? JSON)?["text"] as? String,"Android inbox fixture message 0")
+            }
+            if ["normal","drop"].contains(mode) { XCTAssertEqual(opened["removed"] as? Bool,true); XCTAssertThrowsError(try inbox.get(root,id)) }
+            else {
+                XCTAssertEqual(opened["removed"] as? Bool,false)
+                XCTAssertEqual(try inbox.get(root,id).count,5)
+                _ = try await engine.inbox("refresh"); XCTAssertTrue(InboxStore.pending(try inbox.get(root,id)),"Refresh must not restore a disappearing ciphertext")
+                _ = try await fixture("ack-mode",["mode":"normal"])
+                let restarted = CryptoEngine(wallet:wallet,store:delivery,inbox:inbox); defer { restarted.close() }
+                _ = try await restarted.inbox("remove",wallet:root,id:id); XCTAssertThrowsError(try inbox.get(root,id))
+            }
+        }
+        _ = try await fixture("ack-mode",["mode":"normal"])
+        let seeded = try await fixture("seed-inbox",["count":1,"mode":"wrong"]), root = seeded["wallet"] as! String, id = (seeded["ids"] as! [String])[0]
+        _ = try await engine.inbox("refresh")
+        let before = try await fixture("delivery-stats")
+        do { _ = try await engine.inbox("openDiscard",wallet:root,id:id); XCTFail("Wrong recipient decrypted") } catch { }
+        let after = try await fixture("delivery-stats")
+        XCTAssertEqual(integer(before["acks"]),integer(after["acks"])); XCTAssertNotNil(try inbox.get(root,id)["envelope"])
+    }
+    @MainActor func testDisappearingSendRemovesConfirmedCopyAndRetainsUncertainPayment() async throws {
+        try await available()
+        let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:folder) }
+        let store = try DeliveryStore(directory:folder,fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
+        let wallet = JSONWallet(endpoint:URL(string:"http://127.0.0.1:18776")!), engine = CryptoEngine(wallet:wallet,store:store); defer { engine.close() }
+        let envelope = try await engine.run("seal",text:"Disappearing fixture send") as! String
+        let id = try store.create(envelope:envelope,key:"self",recipient:"self",name:"Private",disappear:true)
+        _ = try await engine.deliver("prepare",id:id); _ = try await engine.deliver("send",id:id)
+        XCTAssertThrowsError(try store.get(id)); XCTAssertTrue(try store.list().isEmpty)
+        let uncertain = try store.create(envelope:envelope,key:"self",recipient:"self",name:"Private",disappear:true)
+        _ = try await engine.deliver("prepare",id:uncertain); _ = try await fixture("lose-next-payment")
+        do { _ = try await engine.deliver("send",id:uncertain) } catch { }
+        XCTAssertEqual(try store.get(uncertain)["state"] as? String,"PAYMENT_REQUESTED")
+        XCTAssertThrowsError(try store.cleanup(uncertain)); XCTAssertThrowsError(try store.begin(uncertain,action:"send"))
+    }
     @MainActor func testNativeMESearchSelectionContactAndEncryption() async throws {
         try await available()
         let page = MEPageFixture(); defer { page.close() }

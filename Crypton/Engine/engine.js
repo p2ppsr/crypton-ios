@@ -50,6 +50,20 @@ function content(text) {
   }
   throw Error('Unsupported encrypted content.');
 }
+async function openEnvelope(operation,input) {
+      const e = envelope(input);
+      const args = {protocolID:[2,'crypton'],keyID:'1',counterparty:e.sender};
+      let text;
+      try {
+        const own = await identity(operation); live(operation);
+        const {plaintext} = await own.wallet.decrypt({...args,ciphertext:Utils.toArray(e.ciphertext,'base64')});
+        text = Utils.toUTF8(plaintext);
+      } catch {
+        live(operation);
+        text = await wallet(operation,'decrypt',{...args,ciphertext:e.ciphertext});
+      }
+      return content(text);
+}
 window.runCrypto = async request => {
   const operation = request.id; active = operation;
   try {
@@ -65,18 +79,7 @@ window.runCrypto = async request => {
       const {ciphertext} = await senderWallet.encrypt({plaintext:Utils.toArray(plaintext,'utf8'),protocolID:[2,'crypton'],keyID:'1',counterparty:recipient});
       result = JSON.stringify({protocol:'crypton',version:2,ciphertext:Utils.toBase64(ciphertext),sender}); envelope(result);
     } else if (request.action === 'open') {
-      const e = envelope(request.text);
-      const args = {protocolID:[2,'crypton'],keyID:'1',counterparty:e.sender};
-      let text;
-      try {
-        const own = await identity(operation); live(operation);
-        const {plaintext} = await own.wallet.decrypt({...args,ciphertext:Utils.toArray(e.ciphertext,'base64')});
-        text = Utils.toUTF8(plaintext);
-      } catch {
-        live(operation);
-        text = await wallet(operation,'decrypt',{...args,ciphertext:e.ciphertext});
-      }
-      result = content(text);
+      result = await openEnvelope(operation,request.text);
     } else throw Error('Unsupported operation.');
     live(operation); active = null; post({event:'result',id:operation,result});
   } catch (error) {

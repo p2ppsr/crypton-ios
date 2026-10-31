@@ -22,20 +22,22 @@ import Security
     private var command: JSON?
     private var response: Result<Any,Error>?
     var waiting: ((Bool) -> Void)?
+    private let scheme:String
     init(open: @escaping @MainActor (URL) async -> Bool = { await UIApplication.shared.open($0) },
          foreground: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active },
-         backgroundTime: Bool = true) {
-        self.open = open; self.foreground = foreground; self.backgroundTime = backgroundTime
+         backgroundTime: Bool = true, scheme:String = "metanet") {
+        self.open = open; self.foreground = foreground; self.backgroundTime = backgroundTime; self.scheme = scheme
     }
-    static func handoffURL(_ target:URL) throws -> URL {
-        var c = URLComponents(); c.scheme = "metanet"; c.host = "browser"
+    static func handoffURL(_ target:URL,scheme:String = "metanet") throws -> URL {
+        guard ["metanet","metanet-bob"].contains(scheme) else { throw CryptonError("Unsupported ME wallet application.") }
+        var c = URLComponents(); c.scheme = scheme; c.host = "browser"
         c.queryItems = [URLQueryItem(name:"url",value:target.absoluteString)]
         guard let url = c.url else { throw CryptonError("Could not open Metanet Explorer.") }; return url
     }
     func call(_ method:String,_ args:JSON,raw:Bool = false) async throws -> Any {
         guard !starting, continuation == nil else { throw CryptonError("A wallet request is already in progress.") }
         let allowed = Set(["isAuthenticated","waitForAuthentication","getPublicKey","encrypt","decrypt","createHmac","verifyHmac","createSignature","verifySignature","createAction","listActions"])
-        guard allowed.contains(method) || RecipientDiscovery.methods.contains(method) else { throw CryptonError("Unsupported ME wallet request.") }
+        guard allowed.contains(method) || RecipientDiscovery.methods.contains(method) || (method == "getNetwork" && raw && args.isEmpty) else { throw CryptonError("Unsupported ME wallet request.") }
         let params = RecipientDiscovery.methods.contains(method) ? try RecipientDiscovery.arguments(method,args) : raw ? args : try Wire.walletArguments(method,args)
         guard try jsonData(params).count <= 500_000 else { throw CryptonError("ME request is too large.") }
         let run = UUID(); generation = run; starting = true
@@ -61,7 +63,7 @@ import Security
             origin = "http://localhost:\(port)"; id = UUID().uuidString; self.method = method; self.raw = raw
             command = ["type":"CWI","isInvocation":true,"id":id,"call":method,"args":params]; response = nil; starting = false
             let target = URL(string:origin + "/" + token + "/")!
-            let link = try Self.handoffURL(target)
+            let link = try Self.handoffURL(target,scheme:scheme)
             return try await withCheckedThrowingContinuation { done in
                 continuation = done; waiting?(true)
                 timer = Task { [weak self] in

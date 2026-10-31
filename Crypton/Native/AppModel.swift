@@ -8,10 +8,10 @@ struct PublicContact: Codable, Identifiable, Equatable {
     var walletIdentity: String? = nil
     var id: String { key }
 }
-enum Screen { case home, recipient, compose, result, contacts, settings, guide, outbox, delivery }
+enum Screen { case home, recipient, compose, result, contacts, settings, guide, outbox, delivery, inbox, inboxMessage }
 
 @MainActor final class AppModel: ObservableObject {
-    @Published var screen: Screen = .home
+    @Published var screen: Screen = .home { didSet { if oldValue == .inboxMessage && screen != .inboxMessage { clearInboxView(); scheduleRemovalRetry(1) } } }
     @Published var busy = false
     @Published var error: String?
     @Published var status = "Connect your wallet"
@@ -35,6 +35,24 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     @Published var deliveryID = ""
     @Published var deliveryRecipient = ""
     @Published var contacts: [PublicContact] = []
+    @Published var disappearSend:Bool { didSet { defaults.set(disappearSend,forKey:"disappearSend"); if disappearSend { clearOwnedClipboard() } } }
+    @Published var disappearReceive:Bool { didSet { defaults.set(disappearReceive,forKey:"disappearReceive") } }
+    @Published var inboxWallet:String { didSet { defaults.set(inboxWallet,forKey:"inboxWallet") } }
+    @Published var inboxID = ""
+    @Published var inboxRows:[JSON] = []
+    @Published var inboxContent:JSON?
+    @Published var inboxNotice = ""
+    @Published var inboxMore = false
+    @Published var showDismissed = false { didSet { loadInbox() } }
+    @Published var privateInboxView = false
+    @Published var privateRemoved = false
+    @Published var foreground = false
+    @Published var captureActive = false
+    private var privateViewed = false
+    private var inboxOffset = 0
+    private var removalNeedsWallet = false
+    private var removalRetry:Task<Void,Never>?
+    let inboxStore:InboxStore
     @Published var legacy: Bool { didSet { defaults.set(legacy,forKey:"legacyMessages") } }
     @Published var walletMode: String
     @Published var endpoint: String
@@ -70,6 +88,15 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
         #else
         self.store = store ?? DeliveryStore()
         #endif
+        #if DEBUG
+        let inboxDirectory = ProcessInfo.processInfo.arguments.contains("--uitesting") ? self.store.directory.deletingLastPathComponent().appendingPathComponent("UITestInboxes") : nil
+        if ProcessInfo.processInfo.arguments.contains("--reset-qa-inbox"), let inboxDirectory = inboxDirectory { try? FileManager.default.removeItem(at:inboxDirectory) }
+        inboxStore = InboxStore(delivery:self.store,directory:inboxDirectory)
+        #else
+        inboxStore = InboxStore(delivery:self.store)
+        #endif
+        disappearSend = defaults.bool(forKey:"disappearSend"); disappearReceive = defaults.bool(forKey:"disappearReceive")
+        inboxWallet = defaults.string(forKey:"inboxWallet") ?? ""
         walletMode = defaults.string(forKey:"walletMode") ?? "me"
         legacy = defaults.object(forKey:"legacyMessages") as? Bool ?? (defaults.string(forKey:"walletMode") == "portal")
         endpoint = defaults.string(forKey:"walletEndpoint") ?? ""
@@ -84,8 +111,8 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
         clearSearch()
         engine?.close(); engine = nil; portal?.close(); wallet?.cancel(); wallet = nil
         status = "Connect your wallet"; portalVisible = false
-        if walletMode == "me" {
-            let me = MEWallet()
+        if ["me","me-bob"].contains(walletMode) {
+            let me = MEWallet(scheme:walletMode == "me-bob" ? "metanet-bob" : "metanet")
             me.waiting = { [weak self] waiting in if waiting { self?.status = "Approve in ME, then return to Crypton" } }
             wallet = me
         } else if walletMode == "portal" {
@@ -112,7 +139,7 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     }
     private func crypto() throws -> CryptoEngine {
         if let engine = engine { return engine }
-        let engine = CryptoEngine(wallet:try connection(),store:store); self.engine = engine; return engine
+        let engine = CryptoEngine(wallet:try connection(),store:store,inbox:inboxStore); self.engine = engine; return engine
     }
     func perform(_ work: @escaping @MainActor () async throws -> Void) {
         guard !busy else { return }; busy = true; error = nil
@@ -242,7 +269,7 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     func deleteContact(_ contact: PublicContact) { do { try persistContacts(contacts.filter { $0.key != contact.key }) } catch { self.error = error.localizedDescription } }
     private func persistContacts(_ value: [PublicContact]) throws { defaults.set(try JSONEncoder().encode(value),forKey:"publicContacts"); contacts = value }
     func clearSession() {
-        cancel(); engine?.close(); engine = nil; portal?.close(); wallet = nil
+        cancel(); clearInboxView(); removalRetry?.cancel(); engine?.close(); engine = nil; portal?.close(); wallet = nil
         message = ""; ciphertext = ""; output = ""; layerNote = ""; peer = "self"; peerName = "Myself"; keyDraft = ""; peerWalletIdentity = nil; clearSearch(); recipientQuery = ""; legacySenderSelected = false; screen = .home
         WKWebsiteDataStore.default().removeData(ofTypes:WKWebsiteDataStore.allWebsiteDataTypes(),modifiedSince:.distantPast) { [weak self] in Task { @MainActor in self?.configureWallet() } }
     }
@@ -254,7 +281,7 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
             guard outputKind == "encrypted", Wire.isEnvelope(output) else { throw CryptonError("Create a v2 message before using MessageBox.") }
             let saved = defaults.dictionary(forKey:"deliveryKeys") as? [String:String] ?? [:]
             let recipient = peer == "self" ? "self" : peerWalletIdentity ?? saved[peer] ?? peer
-            deliveryID = try store.create(envelope:output,key:peer,recipient:recipient,name:peerName)
+            deliveryID = try store.create(envelope:output,key:peer,recipient:recipient,name:peerName,disappear:disappearSend)
             deliveryRecipient = recipient == "self" ? "" : recipient; screen = .delivery
         } catch { self.error = error.localizedDescription }
     }
@@ -262,6 +289,7 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     func deliver(_ action: String) {
         perform { [self] in
             let record = try store.get(deliveryID)
+            if action == "cleanup" { try store.cleanup(deliveryID); wipeSentMessage(); return }
             if ["prepare","send"].contains(action) {
                 let key = deliveryRecipient.trimmingCharacters(in:.whitespacesAndNewlines)
                 let recipient = key.isEmpty && record["encryptionKey"] as? String == "self" ? "self" : try Wire.identity(key)
@@ -274,13 +302,109 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
                 }
                 else if record["recipient"] as? String != recipient { throw CryptonError("Recipient changed. Refresh the fee before sending.") }
             }
-            _ = try await crypto().deliver(action,id:deliveryID)
+            do { _ = try await crypto().deliver(action,id:deliveryID) }
+            catch {
+                if record["disappear"] as? Bool == true, let marker = try? store.get(deliveryID), DeliveryStore.discarded(marker) { wipeSentMessage() }
+                throw error
+            }
+            if record["disappear"] as? Bool == true, !FileManager.default.fileExists(atPath:store.directory.appendingPathComponent(deliveryID+".json").path) {
+                wipeSentMessage(); return
+            }
             status = "Wallet connected"
         }
     }
     func active(_ active: Bool) {
+        foreground = active
         sound.active = active
-        if active { (wallet as? MEWallet)?.resumed(); if !busy { importPendingShare() } }
+        if active {
+            captureActive = UIScreen.main.isCaptured
+            (wallet as? MEWallet)?.resumed()
+            if privateInboxView { privateViewed = true }
+            if !busy { importPendingShare() }; scheduleRemovalRetry(1)
+        } else {
+            removalRetry?.cancel()
+            if privateInboxView && privateViewed { closeInboxMessage() }
+        }
+    }
+    func copyText(_ value:String) {
+        UIPasteboard.general.setItems([["public.utf8-plain-text":value,"com.projectbabbage.Crypton.ownedClipboard":Data([1])]],options:[.localOnly:true,.expirationDate:Date().addingTimeInterval(120)])
+    }
+    private func clearOwnedClipboard() {
+        if UIPasteboard.general.contains(pasteboardTypes:["com.projectbabbage.Crypton.ownedClipboard"]) { UIPasteboard.general.items = [] }
+    }
+    private func wipeSentMessage() {
+        message = ""; ciphertext = ""; output = ""; layerNote = ""; peer = "self"; peerName = "Myself"; peerWalletIdentity = nil; keyDraft = ""; clearSearch(); recipientQuery = ""; clearOwnedClipboard()
+        deliveryID = ""; deliveryRecipient = ""; screen = .outbox; status = "Sent · local message copies removed"
+        engine?.close(); engine = nil
+    }
+    func loadInbox() {
+        guard !inboxWallet.isEmpty else { inboxRows = []; return }
+        do { inboxRows = try inboxStore.list(inboxWallet,dismissed:showDismissed) }
+        catch { inboxNotice = "Saved inbox could not be read: " + error.localizedDescription }
+    }
+    func showInbox() { clearInboxView(); screen = .inbox; loadInbox(); scheduleRemovalRetry(1) }
+    func showInboxMessage(_ id:String) { clearInboxView(); inboxID = id; screen = .inboxMessage }
+    private func clearInboxView() { inboxContent = nil; privateInboxView = false; privateViewed = false; privateRemoved = false }
+    func closeInboxMessage() { clearInboxView(); inboxID = ""; screen = .inbox; loadInbox(); scheduleRemovalRetry(1) }
+    func flagInbox(_ dismissed:Bool) {
+        do { try inboxStore.flag(inboxWallet,inboxID,"dismissed",dismissed); closeInboxMessage() } catch { self.error = error.localizedDescription }
+    }
+    func receive(_ requested:String,more:Bool = false,automatic:Bool = false) {
+        guard !busy else { return }
+        if !automatic { removalNeedsWallet = false }
+        let action = requested == "open" && disappearReceive ? "openDiscard" : requested
+        let expected = action == "refresh" && !more ? "" : inboxWallet, id = inboxID
+        let offset = more ? inboxOffset : 0, layer = action == "layer" ? inboxContent?["envelope"] as? String ?? "" : ""
+        let previouslyRemoved = privateRemoved
+        perform { [self] in
+            do {
+                guard !(wallet is PortalWallet) else { throw CryptonError("The MessageBox inbox requires Metanet Explorer or a BRC-100 wallet.") }
+                let result = try await crypto().inbox(action,wallet:expected,id:id,offset:offset,layer:layer)
+                inboxWallet = try Wire.identity(result["wallet"] as? String ?? "")
+                if ["open","openDiscard","layer"].contains(action) {
+                    guard let content = result["content"] as? JSON else { throw CryptonError("Invalid decrypted inbox message.") }
+                    inboxContent = content; inboxID = id; screen = .inboxMessage
+                    if action == "open" { try inboxStore.flag(inboxWallet,id,"read",true) }
+                    else {
+                        privateInboxView = true; privateViewed = foreground
+                        privateRemoved = action == "layer" ? previouslyRemoved : result["removed"] as? Bool == true
+                        if action == "openDiscard" {
+                            clearOwnedClipboard()
+                            let detail = result["removalError"] as? String ?? ""
+                            inboxNotice = privateRemoved ? "Server removal confirmed" : "Server removal pending. " + detail
+                            removalNeedsWallet = Self.needsWallet(detail)
+                        }
+                    }
+                } else if action == "remove" {
+                    inboxNotice = "Server removal confirmed · no saved message copy"
+                    if privateInboxView { privateRemoved = true } else { inboxID = ""; screen = .inbox }
+                } else {
+                    inboxMore = result["hasMore"] as? Bool == true; inboxOffset = integer(result["nextOffset"]) ?? 0
+                    inboxNotice = "Retrieved \(integer(result["count"]) ?? 0) Crypton message(s). \(integer(result["skipped"]) ?? 0) other or unreadable notification(s) left untouched."
+                    clearInboxView(); screen = .inbox
+                }
+                loadInbox(); scheduleRemovalRetry(30)
+            } catch {
+                if ["remove","openDiscard"].contains(action) {
+                    inboxNotice = "Server removal pending. " + error.localizedDescription; loadInbox()
+                    removalNeedsWallet = Self.needsWallet(error.localizedDescription); scheduleRemovalRetry(60)
+                }
+                if !automatic { throw error }
+            }
+        }
+    }
+    private static func needsWallet(_ error:String) -> Bool { ["wallet","permission","declined","profile","denied","cancel"].contains { error.localizedCaseInsensitiveContains($0) } }
+    func scheduleRemovalRetry(_ seconds:UInt64) {
+        removalRetry?.cancel()
+        guard foreground, !removalNeedsWallet, !inboxWallet.isEmpty else { return }
+        removalRetry = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds:seconds * 1_000_000_000) } catch { return }
+            guard let self = self, self.foreground, !self.privateInboxView else { return }
+            if self.busy { self.scheduleRemovalRetry(30); return }
+            do {
+                if let id = try self.inboxStore.nextPending(self.inboxWallet) { self.inboxID = id; self.receive("remove",automatic:true) }
+            } catch { self.inboxNotice = error.localizedDescription }
+        }
     }
     func importPendingShare() {
         guard !busy, let shares = try? IncomingShareStore(), let files = try? shares.pending(), let url = files.first else { return }

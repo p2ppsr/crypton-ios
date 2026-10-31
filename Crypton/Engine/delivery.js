@@ -146,4 +146,3 @@ window.runDelivery=async request=>{
     if(active===operation){active=null;post({event:'error',id:operation,message:typeof error?.message==='string'?error.message.slice(0,350):'MessageBox delivery was interrupted. Check the outbox before trying again.'});}
   }
 };
-post({event:'ready'});

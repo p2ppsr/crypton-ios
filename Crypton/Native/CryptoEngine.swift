@@ -4,6 +4,8 @@ import WebKit
     private var web: WKWebView!
     private let wallet: WalletConnection
     private let store: DeliveryStore
+    let inboxStore:InboxStore
+    private var inboxSession:InboxSession?
     private var ready = false
     private var queued: (String, JSON)?
     private var pending: CheckedContinuation<Any, Error>?
@@ -14,8 +16,8 @@ import WebKit
     private var timer: Task<Void,Never>?
     private var http: BoundedHTTP?
     private var root: URL?
-    init(wallet: WalletConnection, store: DeliveryStore) {
-        self.wallet = wallet; self.store = store
+    init(wallet: WalletConnection, store: DeliveryStore, inbox:InboxStore? = nil) {
+        self.wallet = wallet; self.store = store; inboxStore = inbox ?? InboxStore(delivery:store)
         super.init()
         let controller = WKUserContentController()
         controller.add(self, name: "cryptonEngine")
@@ -33,20 +35,27 @@ import WebKit
             if peer != "self" { _ = try Wire.identity(peer) }
             guard !text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty, text.utf16.count <= 16_000 else { throw CryptonError("Enter a message of at most 16,000 characters.") }
         }
-        delivery = nil; discovery = nil
+        delivery = nil; discovery = nil; inboxSession = nil
         return try await start("runCrypto", request:["action":action,"text":text,"peer":peer])
     }
     func search(_ query:String) async throws -> [DiscoveredIdentity] {
         guard pending == nil else { throw CryptonError("Another Crypton request is in progress.") }
         let request = try RecipientDiscovery.request(query)
-        delivery = nil; discovery = request; discoveryRequested = false
+        delivery = nil; inboxSession = nil; discovery = request; discoveryRequested = false
         return try RecipientDiscovery.identities(await start("runDiscovery",request:["method":request.method,"args":request.args]))
     }
     func deliver(_ action: String, id: String) async throws -> Any {
         guard pending == nil else { throw CryptonError("Another Crypton request is in progress.") }
-        try store.begin(id,action:action); delivery = (id,action); discovery = nil
+        try store.begin(id,action:action); delivery = (id,action); discovery = nil; inboxSession = nil
         do { return try await start("runDelivery",request:["action":action,"record":try store.get(id)]) }
-        catch { try store.saveError(id,error); throw error }
+        catch { try? store.saveError(id,error); throw error }
+    }
+    func inbox(_ action:String,wallet:String = "",id:String = "",offset:Int = 0,layer:String = "") async throws -> JSON {
+        guard pending == nil else { throw CryptonError("Another Crypton request is in progress.") }
+        let session = try InboxSession(store:inboxStore,action:action,wallet:wallet,id:id,offset:offset,layer:layer)
+        inboxSession = session; delivery = nil; discovery = nil
+        let value = try await start("runInbox",request:["action":action,"wallet":wallet,"messageId":id,"offset":offset,"envelope":session.envelope,"host":inboxStore.host,"agent":inboxStore.agent])
+        guard let result = value as? JSON, result["wallet"] as? String == session.wallet else { throw CryptonError("Invalid inbox response.") }; return result
     }
     private func start(_ function: String, request: JSON) async throws -> Any {
         guard pending == nil else { throw CryptonError("Another Crypton request is in progress.") }
@@ -68,7 +77,7 @@ import WebKit
         catch { finish(.failure(error)) }
     }
     private func finish(_ result: Result<Any,Error>) {
-        let done = pending; pending = nil; operation = nil; queued = nil; discovery = nil; timer?.cancel(); timer = nil
+        let done = pending; pending = nil; operation = nil; queued = nil; discovery = nil; inboxSession = nil; timer?.cancel(); timer = nil
         done?.resume(with:result)
     }
     func cancel(reason: String = "Crypton request cancelled. Your draft is still here.") {
@@ -104,9 +113,16 @@ import WebKit
                         guard args["counterparty"] as? String == "self", let encoded = args["data"] as? String,
                               let source = String(data:try Wire.base64(encoded),encoding:.utf8), source.range(of:"^crypton/messaging-identity/v1/[0-9]{1,3}$",options:.regularExpression) != nil else { throw CryptonError("Invalid receiving identity request.") }
                     } else { _ = try Wire.identity(args["counterparty"] as? String ?? "") }
+                    try inboxSession?.beforeCrypto(method,args)
                     value = try await wallet.call(method,args,raw:false)
                 case "walletSdk":
-                    guard let session = delivery, let method = data["call"] as? String, let args = data["args"] as? JSON else { throw CryptonError("Missing delivery authorization.") }
+                    guard let method = data["call"] as? String, let args = data["args"] as? JSON else { throw CryptonError("Missing wallet authorization.") }
+                    if let session = inboxSession {
+                        try session.beforeWallet(method,args)
+                        value = try await wallet.call(method,args,raw:true); try session.returned(method,args,value)
+                        break
+                    }
+                    guard let session = delivery else { throw CryptonError("Missing delivery authorization.") }
                     #if DEBUG
                     NSLog("Crypton delivery wallet: %@",method)
                     #endif
@@ -115,11 +131,13 @@ import WebKit
                     // Save the returned transaction even if the user cancelled while the wallet was approving it.
                     if method == "createAction" { guard let result = value as? JSON else { throw CryptonError("Invalid wallet transaction.") }; try store.walletReturned(session.id,result:result) }
                 case "checkpoint":
-                    guard let session = delivery, let kind = data["kind"] as? String, let v = data["value"] as? JSON else { throw CryptonError("Invalid delivery checkpoint.") }
-                    try store.checkpoint(session.id,action:session.action,kind:kind,value:v); value = true
+                    guard let kind = data["kind"] as? String, let v = data["value"] as? JSON else { throw CryptonError("Invalid checkpoint.") }
+                    if let session = inboxSession { try session.checkpoint(kind,v) }
+                    else if let session = delivery { try store.checkpoint(session.id,action:session.action,kind:kind,value:v) }
+                    else { throw CryptonError("Missing checkpoint authorization.") }; value = true
                 case "http":
-                    guard let session = delivery, let request = data["request"] as? JSON else { throw CryptonError("Missing delivery authorization.") }
-                    value = try await fetch(session,request)
+                    guard let request = data["request"] as? JSON else { throw CryptonError("Missing HTTP request.") }
+                    value = try await fetch(request)
                 case "paymentProof":
                     guard let session = delivery, session.action == "recover" else { throw CryptonError("Payment proof recovery is unavailable.") }
                     value = try await paymentProof(store.recoveryTransaction(session.id))
@@ -139,12 +157,14 @@ import WebKit
         do { web.evaluateJavaScript("walletReply(\(try jsonString(id)),\(try jsonString(result ?? NSNull())),\(try jsonString(error as Any? ?? NSNull())))") }
         catch { finish(.failure(error)) }
     }
-    private func fetch(_ session: (id:String,action:String), _ input: JSON) async throws -> Any {
+    private func fetch(_ input: JSON) async throws -> Any {
         guard let address = input["url"] as? String, let url = URL(string:address), let method = input["method"] as? String,
               let headers = input["headers"] as? [String:String], headers.count <= 128 else { throw CryptonError("Invalid MessageBox request.") }
         let body = input["body"] as? String ?? ""
         guard body.utf8.count <= 8_000_000 else { throw CryptonError("MessageBox request too large.") }
-        try store.beforeHTTP(session.id,action:session.action,url:url,method:method,body:body)
+        if let session = inboxSession { try session.beforeHTTP(url,method,body) }
+        else if let session = delivery { try store.beforeHTTP(session.id,action:session.action,url:url,method:method,body:body) }
+        else { throw CryptonError("Missing MessageBox authorization.") }
         var request = URLRequest(url:url); request.httpMethod = method
         if method == "POST" { request.httpBody = Data(body.utf8) }
         for (key,value) in headers {

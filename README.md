@@ -4,7 +4,7 @@ Native iOS port of [Crypton for Android](https://github.com/p2ppsr/crypton-andro
 
 **The primary workflow is native Metanet Explorer (ME) for wallet operations, MessageBox for delivery, and Crypton for message encryption/decryption.** New installations select native ME and Crypton v2. Existing saved wallet settings are preserved.
 
-The branch includes the SwiftUI application, native ME handoff, Android-compatible v2 engine, MessageBox outbox, share extension, contacts and media import/export, and simulator tests. The original artwork and audio are retained.
+The branch includes the SwiftUI application, native ME handoff, Android-compatible v2 engine, MessageBox inbox/outbox, optional disappearing messages, share extension, contacts and media import/export, and simulator tests. The original artwork and audio are retained.
 
 ![Crypton home screen](docs/screenshots/home.png)
 
@@ -15,6 +15,8 @@ The branch includes the SwiftUI application, native ME handoff, Android-compatib
 - [Understand the three identities](#understand-the-three-identities)
 - [Find a recipient with SocialCert](#find-a-recipient-with-socialcert)
 - [Send and receive messages](#send-and-receive-messages)
+- [MessageBox inbox](#messagebox-inbox)
+- [Disappearing messages](#disappearing-messages)
 - [MessageBox fees and recovery](#messagebox-fees-and-recovery)
 - [Contacts, QR codes and sharing](#contacts-qr-codes-and-sharing)
 - [Legacy and nested messages](#legacy-and-nested-messages)
@@ -107,7 +109,7 @@ Use **Myself** for both encryption and delivery when sending to your own active 
 
 ### Receive and decrypt
 
-For MessageBox delivery, open the notification in **ME** and transfer its enclosed Crypton payload into Crypton. The application does not present a separate automatically synchronized MessageBox inbox.
+Use **MessageBox inbox → Refresh inbox → select message → Decrypt message** for native receiving. The selected ME wallet retrieves and decrypts messages directly. Refresh is manual; there is no background push subscription. You can also transfer a notification payload from ME or use the import paths below.
 
 Crypton accepts encrypted payloads through:
 
@@ -120,6 +122,25 @@ Crypton accepts encrypted payloads through:
 Choose **Decrypt message**, approve the wallet operation in ME when requested, and return to see the plaintext. V2 supplies its sender key in the envelope. Wrong recipients fail to decrypt.
 
 Incoming shares are queued in the app's shared container. Open Crypton to import the next item. **Settings → Import next shared message** handles additional queued items. The share extension supports encrypted text or one selected image; use the contact/recipient identity controls to import public identity QR codes.
+
+## MessageBox inbox
+
+Choose **MessageBox inbox → Refresh inbox**, complete the ME requests and return to Crypton. Select a saved message and choose **Decrypt message**. The plaintext appears in the message view; full public sender/message identifiers are under **Delivery details**.
+
+The inbox authenticates to the pinned MessageBox service, retrieves `notifications` in pages of 25, decrypts the outer MessageBox transport and saves only validated inner Crypton envelopes. **Load more messages** continues pagination. Storage is file-protected, excluded from backup, capped at 1,000 records per wallet, and partitioned by receiving wallet identity. Opening a saved message checks that ME still uses that wallet. Failed refreshes keep cached messages. Plaintext is not persisted.
+
+**Dismiss on this device** hides a saved record locally. **Show dismissed messages → select message → Restore message** restores it. Neither action deletes the server notification. Normal refresh/decryption cannot acknowledge server messages, make payments or internalize attached recipient fees.
+
+## Disappearing messages
+
+Under **Settings → Disappearing messages**, select these independently; both default to **Keep copies**:
+
+- **Sent: remove after confirmed delivery** captures the preference on each new delivery. After a matching MessageBox acceptance receipt, Crypton removes its encrypted outbox/payload/payment-journal copies and clears draft/result/recipient references and Crypton-owned clipboard content. Message export actions are unavailable in this mode. Uncertain payments retain recovery records and cannot start another payment. A completed cleanup marker can be retried without spending again.
+- **Received: decrypt once and remove** applies to inbox decryption. After successful decryption, Crypton atomically replaces local ciphertext with a minimal pending-removal record, automatically sends an authenticated acknowledgement, then verifies an ID-filtered lookup no longer returns the message. Only then does it report **Server removal confirmed**. Failed decryption never authorizes acknowledgement. Failed or uncertain deletion stays pending, cannot rehydrate ciphertext on refresh, and retries after closing the one-view result and on foreground/restart. Wallet permission/profile errors pause automatic prompts until the user refreshes/retries.
+
+The private result and any nested layers are viewable in memory without saving a new envelope. Closing, leaving the view or backgrounding after viewing clears it. Copy/share/selectable plaintext are unavailable. A result completed while ME is foreground waits for the first Crypton view; process death can lose that one-view result. iOS app previews and captured-screen views are covered. iOS screenshot blocking cannot match Android's secure-window flag; this is not a promise of forensic erasure, removal of wallet/on-chain records, external copies or server backups.
+
+Acknowledgement does not collect an attached recipient fee. Receive a wanted fee in ME first; deletion removes that notification's remittance data from Crypton's flow. No automatic funds import or financial transaction is authorized. Existing normal outbox records retain their original retention behavior when settings change.
 
 ## MessageBox fees and recovery
 
@@ -181,6 +202,7 @@ Nested encrypted content opens one layer at a time. After opening an outer layer
 
 | Connection | Role and status |
 | --- | --- |
+| **Metanet Explorer (Bob)** | Separate iOS wallet app selected explicitly in Settings; uses `metanet-bob://` and never falls back to the official wallet. |
 | **Metanet Explorer** | Default and primary workflow; live emulator delivery/decryption verified in both directions. |
 | **BRC-100 JSON** | Optional direct API connection for a compatible wallet exposing an HTTPS JSON endpoint. SDK-backed loopback integration is tested. |
 | **Original portal** | Legacy compatibility option for `https://mobile-portal.babbage.systems`. Its TLS connection failed during testing; live portal login/messaging remains unverified. |
@@ -197,7 +219,8 @@ The original portal adapter preserves the historical `iOS_<bundle identifier>` o
 | App-derived receiving material and ephemeral sender keys | Held in the isolated engine's memory; not saved as key files by Crypton. |
 | Plaintext drafts and decrypted results | In memory; cleared by **Done** or **Clear wallet session**. |
 | Public contacts, wallet connection and delivery-key mappings | Persist in application preferences. |
-| Encrypted outbox, saved payment data and receipts | Atomic, file-protected application storage excluded from backup. |
+| Encrypted outbox, saved payment data and receipts | Atomic, file-protected application storage excluded from backup; confirmed disappearing sends remove them. |
+| Received messages | Encrypted, wallet-scoped and file-protected; private decryption replaces ciphertext with a minimal deletion-retry record before server removal. |
 | Incoming shared encrypted payloads | File-protected App Group queue, excluded from backup; consumed on successful import. |
 
 Clearing a wallet session retains contacts and the outbox and does not sign the external wallet out. OS file protection can make protected records unavailable while a physical device is locked; hardware-specific behavior was not validated in simulator QA.
@@ -256,6 +279,10 @@ scripts/test-ios.sh
 
 Choose a new result-bundle path for each run. The script stages the public HEIC fixture, starts loopback services on ports **18776** and **18777**, runs the independent bundled-engine interoperability check and Xcode tests, then stops its fixture process. Those ports must be available. Node.js 22 is used by the checked-in CI workflow.
 
+Additional Xcode arguments are forwarded, for example `scripts/test-ios.sh -only-testing:CryptonTests/MEAndDeliveryIntegrationTests/testPrivateMessageClearsOnBackgroundAndRemovalRetriesAfterRestart` for a focused restart check with the same fixtures and simulator isolation.
+
+An additional installed ME Bob handoff check is opt-in and excluded from the default 47 cases. Install Bob on the dedicated test simulator, start `node scripts/me-bob-launch-fixture.cjs`, and dispatch `metanet-bob://browser?url=http%3A%2F%2Flocalhost%3A18778%2Ftest%2Fbob-route-check` to that device. Then run the test runner with `OTHER_SWIFT_FLAGS=-DME_BOB_SMOKE_TEST -only-testing:CryptonUITests/CryptonUITests/testInstalledBobSchemeHandoff`. Stop the static fixture afterward. It checks OS routing and actual page rendering without wallet APIs or account creation.
+
 Fixtures use disposable SDK wallets and synthetic transactions. They do not access installed ME profiles, broadcast transactions or spend real funds. Explicit Debug-only test arguments isolate the test share inbox and payment journal; the fixture delivery override is compiled out of Release.
 
 [GitHub Actions](.github/workflows/ios.yml) runs the fixture-backed tests and an unsigned iPhone build on pushes and pull requests. A local passing run does not imply the hosted workflow has already passed for a newly pushed commit.
@@ -266,11 +293,13 @@ Automated verification on **31 October 2026**; installed-wallet live interoperab
 
 | Check | Result |
 | --- | --- |
-| Native/integration tests | 23 passed |
-| UI tests, including recipient search, Files/Photos/HEIC, nested content, sharing and force-quit recovery | 13 passed |
-| Total fixture-backed suite | **36 passed; no skips or failures** |
+| Native/integration tests | 31 unique cases passed |
+| UI tests, including native inbox, retention, recipient search, Files/Photos/HEIC, nested content, sharing and force-quit recovery | 16 passed |
+| Total fixture-backed coverage | **47 unique cases passed; no skips**, across the full run and focused verification described in the parity report |
 | Certified recipient search, selection, contact saving and delivery prefilling | Passed with disposable wallets, including the native ME page/CWI path |
 | Standalone bundled-engine/independent SDK interoperability | Passed |
+| Independent inbox driver, including authenticated removal and failure recovery | Passed |
+| Installed ME Bob app launch and Bob-only native browser handoff | Additional opt-in simulator case passed with a disposable static page |
 | Simulator and unsigned iPhone Release builds | Passed |
 | Installed iOS ME → production MessageBox → Android ME → Crypton decryption | Passed on emulators |
 | Reverse Android → iOS MessageBox delivery and native ME decryption | Passed on emulators |
@@ -282,11 +311,12 @@ Known boundaries:
 
 - The original portal failed TLS setup in the test environment; its login and message operations remain unverified.
 - Live SocialCert directory lookup through an installed ME wallet profile remains unverified; the automated discovery fixture models the wallet's already-validated certificate results.
+- The new native inbox and automatic removal are verified against authenticated disposable MessageBox fixtures. Production retrieval/removal through the newly built iOS ME Bob wallet has not been exercised; the earlier live delivery/decryption checks used the previous workflows. Private iOS views cover previews and hide during capture, but cannot block screenshots.
 - Phone-contact/vCard and clipboard round trips were exercised. Reminders received a test draft; print and Watch flows opened previews. Completing account-backed sharing, real printing and Watch installation was not verified.
 - Insufficient funds, denied permissions, changed quotes, dropped connections and process termination during payment were tested with disposable wallets. Those failures were not induced on the funded production wallets.
 - Audio tests use real simulator players and simulated interruption notifications. Physical camera scanning, cellular interruptions, device locking/provisioning and a full iPad/device matrix remain outside emulator coverage.
 
-See [recipient-search verification](docs/RECIPIENT_SEARCH.md), [port verification](docs/PORT_VERIFICATION.md), [remaining-functions QA](docs/REMAINING_FUNCTIONS_QA.md) and [native ME handoff](docs/ME_IOS_HANDOFF.md) for more detail.
+See [Android 2.4 parity and retention details](docs/ANDROID_PARITY_2_4.md), [recipient-search verification](docs/RECIPIENT_SEARCH.md), [port verification](docs/PORT_VERIFICATION.md), [remaining-functions QA](docs/REMAINING_FUNCTIONS_QA.md) and [native ME handoff](docs/ME_IOS_HANDOFF.md) for more detail.
 
 ## Troubleshooting
 

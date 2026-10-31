@@ -29,12 +29,17 @@ import Foundation
         let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard size <= 8_000_000 else { throw CryptonError("Delivery record too large.") }
         let r = try object(Data(contentsOf: url))
-        guard r["id"] as? String == id, integer(r["version"]) == 1, r["host"] as? String == serviceHost, r["agent"] as? String == serviceAgent, r["inbox"] as? String == "notifications", let envelope = r["envelope"] as? String else { throw CryptonError("Invalid delivery record.") }
+        guard r["id"] as? String == id, integer(r["version"]) == 1, r["host"] as? String == serviceHost, r["agent"] as? String == serviceAgent, r["inbox"] as? String == "notifications" else { throw CryptonError("Invalid delivery record.") }
+        if Self.discarded(r) { return r }
+        guard let envelope = r["envelope"] as? String else { throw CryptonError("Missing delivery envelope.") }
         _ = try Wire.envelope(envelope); return r
     }
     func list() throws -> [JSON] {
         if !FileManager.default.fileExists(atPath: directory.path) { return [] }
-        return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).filter { $0.pathExtension == "json" }.map { try get($0.deletingPathExtension().lastPathComponent) }.sorted { ($0["created"] as? Double ?? 0) > ($1["created"] as? Double ?? 0) }
+        return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).filter { $0.pathExtension == "json" }.compactMap { url in
+            let r = try get(url.deletingPathExtension().lastPathComponent)
+            if Self.discarded(r) { do { try cleanup(r["id"] as! String); return nil } catch { return r } }; return r
+        }.sorted { ($0["created"] as? Double ?? 0) > ($1["created"] as? Double ?? 0) }
     }
     private func write(_ record: JSON) throws {
         let bytes = try jsonData(record)
@@ -43,11 +48,11 @@ import Foundation
         var folder = directory; var values = URLResourceValues(); values.isExcludedFromBackup = true; try folder.setResourceValues(values)
         try bytes.write(to: file(id), options: [.atomic, .completeFileProtection])
     }
-    func create(envelope: String, key: String, recipient: String, name: String) throws -> String {
+    func create(envelope: String, key: String, recipient: String, name: String, disappear:Bool = false) throws -> String {
         _ = try Wire.envelope(envelope)
         let key = key == "self" ? key : try Wire.identity(key), to = recipient == "self" ? recipient : try Wire.identity(recipient)
         let id = UUID().uuidString.lowercased()
-        try write(["version":1,"id":id,"created":Date().timeIntervalSince1970 * 1000,"state":"DRAFT","host":serviceHost,"agent":serviceAgent,"inbox":"notifications","envelope":envelope,"encryptionKey":key,"recipient":to,"name":String(name.prefix(120))])
+        try write(["version":1,"id":id,"created":Date().timeIntervalSince1970 * 1000,"state":"DRAFT","host":serviceHost,"agent":serviceAgent,"inbox":"notifications","envelope":envelope,"encryptionKey":key,"recipient":to,"name":String(name.prefix(120)),"disappear":disappear])
         return id
     }
     private func require(_ record: JSON, _ states: String...) throws {
@@ -155,6 +160,10 @@ import Foundation
         case "receipt":
             try require(r,"SUBMITTING")
             guard value["status"] as? String == "success", let p = r["prepared"] as? JSON, sameJSON(value["messageId"],p["messageId"]) else { throw CryptonError("Receipt does not match this delivery.") }
+            if r["disappear"] as? Bool == true {
+                try write(["version":1,"id":id,"state":"SENT","disappear":true,"host":serviceHost,"agent":serviceAgent,"inbox":"notifications"])
+                try cleanup(id); return
+            }
             r["receipt"] = value; r["state"] = "SENT"; r["acceptedAt"] = Date().timeIntervalSince1970 * 1000; r.removeValue(forKey:"error")
         case "history": try require(r,"PAYMENT_REQUESTED"); r["walletHistory"] = value
         case "recoveredPayment":
@@ -186,5 +195,11 @@ import Foundation
     func saveError(_ id: String, _ error: Error) throws {
         var r = try get(id); if r["state"] as? String == "SENT" { return }
         r["error"] = String(error.localizedDescription.prefix(400)); try write(r)
+    }
+    static func discarded(_ r:JSON) -> Bool { r["disappear"] as? Bool == true && r["state"] as? String == "SENT" }
+    func cleanup(_ id:String) throws {
+        let url = try file(id); guard FileManager.default.fileExists(atPath:url.path) else { return }
+        guard Self.discarded(try get(id)) else { throw CryptonError("An unconfirmed payment must retain its recovery record.") }
+        try FileManager.default.removeItem(at:url)
     }
 }

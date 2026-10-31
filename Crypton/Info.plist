@@ -35,6 +35,7 @@
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>metanet</string>
+		<string>metanet-bob</string>
 	</array>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>

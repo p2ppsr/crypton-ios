@@ -26,6 +26,7 @@ if [ -n "${CRYPTON_SDK_ROOT:-}" ]; then
   rm -rf "$CRYPTON_MEDIA_DIRECTORY"
   export CRYPTON_QA_HEIC_READY=1
   node scripts/test-crypton-v2.cjs "$CRYPTON_SDK_ROOT"
+  node scripts/test-messagebox-inbox.cjs "$CRYPTON_SDK_ROOT"
   CRYPTON_FIXTURE_SCRIPT=scripts/sdk-wallet-fixture.cjs
   if node -e 'const {createRequire}=require("node:module"); const path=require("node:path"); createRequire(path.resolve(process.argv[1],"package.json")).resolve("@bsv/auth-express-middleware")' "$CRYPTON_SDK_ROOT" >/dev/null 2>&1; then
     CRYPTON_FIXTURE_SCRIPT=scripts/messagebox-fixture.cjs
@@ -40,4 +41,4 @@ if [ -n "${CRYPTON_RESULT_BUNDLE:-}" ]; then CRYPTON_RESULT_ARGS=(-resultBundleP
 xcodebuild -project Crypton.xcodeproj -scheme Crypton \
   -destination "platform=iOS Simulator,id=$CRYPTON_DEVICE_ID" \
   -derivedDataPath "${CRYPTON_DERIVED_DATA:-/tmp/crypton-ios-derived}" \
-  -parallel-testing-enabled NO "${CRYPTON_RESULT_ARGS[@]}" CODE_SIGN_IDENTITY=- test
+  -parallel-testing-enabled NO "${CRYPTON_RESULT_ARGS[@]}" CODE_SIGN_IDENTITY=- test "$@"

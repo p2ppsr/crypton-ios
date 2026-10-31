@@ -12,7 +12,7 @@ const stranger = new ProtoWallet(PrivateKey.fromRandom());
 let denyNext = false;
 let redirectNext = false;
 let losePayment = false, holdPayment = false, paymentFailure = null, offlineNext = false; const actionHistory = [];
-const deliveryFixture={payments:0,paymentAttempts:0,drop:false,changedFee:false,receiptCount:0};
+const deliveryFixture={acks:0,ackMode:"normal",inboxRows:[],inboxLists:0,payments:0,paymentAttempts:0,drop:false,changedFee:false,receiptCount:0};
 const protocol = { protocolID: [1, 'crypton'], keyID: '1' };
 let discoveryRequests = 0;
 // Models a wallet's already-verified discovery response. No public certificate
@@ -52,6 +52,32 @@ const server = http.createServer(async (request, response) => {
     if (request.url === '/test/delivery-config') result = {host:'http://127.0.0.1:18777', agent:new PrivateKey(2).toPublicKey().toString()};
     else if (request.url === '/test/qa-config') result = {heicReady:process.env.CRYPTON_QA_HEIC_READY==='1'};
     else if (request.url === '/test/recipient') result = { publicKey: bobKey };
+    else if(request.url==='/test/seed-inbox') {
+      const count=args.count??1;if(!Number.isInteger(count)||count<1||count>30)throw Error('Invalid seed count');
+      deliveryFixture.inboxRows=[];
+      const ephemeral=new ProtoWallet(PrivateKey.fromRandom());
+      const h=await alice.createHmac({protocolID:[2,'crypton'],keyID:'1',counterparty:'self',data:Utils.toArray('crypton/messaging-identity/v1/0','utf8')});
+      const cryptonKey=new PrivateKey(h.hmac,'be',undefined,'error').toPublicKey().toString();h.hmac.fill(0);
+      for(let i=0;i<count;i++) {
+        const text='Android inbox fixture message '+i;
+        const receivingKey=args.mode==='wrong'?bobKey:args.mode==='root'?aliceKey:cryptonKey;
+        let content={protocol:'crypton-content',version:1,kind:'message',text};
+        if(args.layer) {
+          const innerWallet=new ProtoWallet(PrivateKey.fromRandom());
+          const inner=await innerWallet.encrypt({protocolID:[2,'crypton'],keyID:'1',counterparty:receivingKey,plaintext:Utils.toArray(JSON.stringify(content),'utf8')});
+          content={protocol:'crypton-content',version:1,kind:'layer',note:'Disposable outer layer',envelope:JSON.stringify({protocol:'crypton',version:2,sender:(await innerWallet.getPublicKey({identityKey:true})).publicKey,ciphertext:Utils.toBase64(inner.ciphertext)})};
+        }
+        const sealed=await ephemeral.encrypt({protocolID:[2,'crypton'],keyID:'1',counterparty:receivingKey,plaintext:Utils.toArray(JSON.stringify(content),'utf8')});
+        const envelope=JSON.stringify({protocol:'crypton',version:2,sender:(await ephemeral.getPublicKey({identityKey:true})).publicKey,ciphertext:Utils.toBase64(sealed.ciphertext)});
+        const inner=JSON.stringify({message:'Encrypted message sent from Crypton for Android. Open Crypton and import this payload:\n\n'+envelope,url:'https://crypton.metanet.app/'});
+        const outer=await bob.encrypt({protocolID:[1,'messagebox'],keyID:'1',counterparty:aliceKey,plaintext:Utils.toArray(inner,'utf8')});
+        const encrypted={encryptedMessage:Utils.toBase64(outer.ciphertext)};
+        const body=i%2?JSON.stringify(encrypted):JSON.stringify({message:JSON.stringify(encrypted),payment:{fixture:'must not be imported'}});
+        deliveryFixture.inboxRows.push({messageId:require('node:crypto').randomBytes(32).toString('hex'),recipient:aliceKey,sender:bobKey,body});
+      }
+      result={wallet:aliceKey,ids:deliveryFixture.inboxRows.map(m=>m.messageId)};
+    }
+    else if (request.url === '/test/ack-mode') { if(!['normal','reject','retain','drop','badLookup'].includes(args.mode))throw Error('Invalid acknowledgement mode');deliveryFixture.ackMode=args.mode;result={ready:true}; }
     else if (request.url === '/test/discovery-stats') result = {requests:discoveryRequests};
     else if (request.url === '/test/v2-for-ios') {
       let recipient = aliceKey;
@@ -101,6 +127,7 @@ const server = http.createServer(async (request, response) => {
       }
       if (denyNext) { denyNext = false; throw new Error('Fixture permission denied'); }
       if (request.url === '/isAuthenticated' || request.url === '/waitForAuthentication') result = { authenticated: true };
+      else if (request.url === '/getNetwork') result = {network:'mainnet'};
       else if (request.url === '/discoverByAttributes' || request.url === '/discoverByIdentityKey') {
         discoveryRequests++;
         if(args.limit!==20 || args.offset!==0 || args.seekPermission!==true)throw Error('Unexpected discovery scope');
