@@ -56,7 +56,7 @@ Historical `PAYMENT_REQUESTED` records with only a generic code-1/background-can
 
 ## Verification
 
-Use only the dedicated `Crypton-iOS-Test` simulator and disposable SDK/MessageBox fixtures. No funds or new production permissions are required for the automated tests. See the final verification results below; authenticated production permission persistence and another paid phone delivery require a separately reviewed live wallet interaction.
+Run automated tests only on the dedicated `Crypton-iOS-Test` simulator with disposable SDK/MessageBox fixtures. Those tests require no funds or production grants. The separately approved installed-wallet checks are recorded below; another paid phone delivery after these changes remains unverified.
 
 ### Results on 31 October 2026
 
@@ -68,7 +68,7 @@ Use only the dedicated `Crypton-iOS-Test` simulator and disposable SDK/MessageBo
 
 A simulator update must retain the installed native bundle identity and its matching embedded Expo configuration; the official and Bob wallet builds have different authentication/app-group settings. Cached Bob artifacts must not be treated as evidence of the installed official wallet configuration. Permission migration between native identities is intentionally not automatic.
 
-The final Xcode-signed installed apps launch successfully. The saved encrypted snapshots are retained and the installed ME wallet retrieved Crypton’s receiving identity. No snapshot, credential or key contents were exported or displayed. A production grouped grant and a new paid send remain unverified until the user reviews the new scopes.
+The final Xcode-signed installed apps launch successfully. The saved encrypted snapshots are retained and the installed ME wallet retrieved Crypton’s receiving identity. No snapshot, credential or key contents were exported or displayed. The operator subsequently approved the six-scope group; its persistence and reuse are verified below. A new paid send after these changes remains unverified.
 
 ### Installed-bridge follow-up
 
@@ -78,6 +78,14 @@ The return control now passes a nonempty ID through ME’s actual message sender
 
 ### Installed simulator evidence
 
-The installed official ME now presents all six selectable Crypton scopes together and displays the same pairing code as Crypton Settings. The preceding denied request returned automatically to Crypton. The group remains unapproved: persistent on-chain permission storage, revocation in the live profile, and another paid production message are not claimed as verified. The final review uses a readable **Allow selected** button and displays the complete permission-storage cost disclosure.
+The installed official ME now presents all six selectable Crypton scopes together and displays the same pairing code as Crypton Settings. The preceding denied request returned automatically to Crypton. The operator subsequently approved the group. Saved-grant inspection and reuse passed; live revocation and a new paid production message were not performed. The final review uses a readable **Allow selected** button and displays the complete permission-storage cost disclosure.
 
 The full fingerprint is split into two DNS labels because Toolbox enforces the 63-character per-label limit. The real manager’s originator validator and grouped-permission routing/selection now test that exact native identity format. Unsigned websites cannot use it.
+
+### Approved grant and restart verification — 31 October 2026
+
+The operator approved the six-scope group in installed iOS ME. A second wallet-identity request completed without another permission prompt and returned automatically to Crypton. After updating/restarting ME in place, another fresh request returned the same wallet identity without reapproval. ME’s Apps & Permissions listed all six stored protocol grants under the matching Crypton pairing identity, with **No remembered limit** for spending. The existing ME browser tab was reused. No new message payment or grant revocation was initiated by the agent.
+
+This verification exposed and corrected a management-view mismatch: the browser’s wallet controls initially used the page’s `localhost` hostname instead of the verified native identity. The view now resolves that exact tab URL to the previously verified pairing identity before listing or revoking grants. A bounded, persistent map of at most 128 verified page identities lets the owner manage grants after a capability expires. This metadata never authenticates wallet calls or permits an expired callback; the active request context retains its independent 15-minute expiry.
+
+Actual Swift policy tests cover that separation after capability expiry, forged-page rejection, and native signing identity. JavaScript tests cover management-only lookup, rejection of unverified native-looking hostnames, and unchanged ordinary-site behavior. TypeScript, permission-refresh failure/stale-result regressions, and mobile wallet UX checks pass. The companion simulator Release build and installed management screen were verified.
