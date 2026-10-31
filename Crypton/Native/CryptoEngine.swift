@@ -1,0 +1,169 @@
+import WebKit
+
+@MainActor final class CryptoEngine: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    private var web: WKWebView!
+    private let wallet: WalletConnection
+    private let store: DeliveryStore
+    private var ready = false
+    private var queued: (String, JSON)?
+    private var pending: CheckedContinuation<Any, Error>?
+    private var operation: String?
+    private var delivery: (id: String, action: String)?
+    private var timer: Task<Void,Never>?
+    private var http: BoundedHTTP?
+    private var root: URL?
+    init(wallet: WalletConnection, store: DeliveryStore) {
+        self.wallet = wallet; self.store = store
+        super.init()
+        let controller = WKUserContentController()
+        controller.add(self, name: "cryptonEngine")
+        controller.addUserScript(WKUserScript(source:"window.cryptonEngine={postMessage:value=>window.webkit.messageHandlers.cryptonEngine.postMessage(value)};",injectionTime:.atDocumentStart,forMainFrameOnly:true))
+        let config = WKWebViewConfiguration(); config.userContentController = controller; config.websiteDataStore = .nonPersistent()
+        web = WKWebView(frame: .zero, configuration: config); web.navigationDelegate = self
+        if let url = Bundle.main.url(forResource:"engine",withExtension:"html",subdirectory:"Engine") {
+            root = url.deletingLastPathComponent(); web.loadFileURL(url, allowingReadAccessTo: root!)
+        }
+    }
+    func run(_ action: String, text: String = "", peer: String = "self") async throws -> Any {
+        if action == "open" { _ = try Wire.envelope(text) }
+        if action == "seal" {
+            if peer != "self" { _ = try Wire.identity(peer) }
+            guard !text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty, text.utf16.count <= 16_000 else { throw CryptonError("Enter a message of at most 16,000 characters.") }
+        }
+        delivery = nil
+        return try await start("runCrypto", request:["action":action,"text":text,"peer":peer])
+    }
+    func deliver(_ action: String, id: String) async throws -> Any {
+        guard pending == nil else { throw CryptonError("Another Crypton request is in progress.") }
+        try store.begin(id,action:action); delivery = (id,action)
+        do { return try await start("runDelivery",request:["action":action,"record":try store.get(id)]) }
+        catch { try store.saveError(id,error); throw error }
+    }
+    private func start(_ function: String, request: JSON) async throws -> Any {
+        guard pending == nil else { throw CryptonError("Another Crypton request is in progress.") }
+        guard root != nil else { throw CryptonError("Bundled crypto engine is missing.") }
+        let id = UUID().uuidString; operation = id
+        var request = request; request["id"] = id
+        return try await withCheckedThrowingContinuation { continuation in
+            pending = continuation; queued = (function, request)
+            timer = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds:900_000_000_000) } catch { return }
+                self?.cancel(reason:"Crypton timed out. Your draft and saved delivery record are still here.")
+            }
+            dispatch()
+        }
+    }
+    private func dispatch() {
+        guard ready, let job = queued else { return }; queued = nil
+        do { web.evaluateJavaScript("\(job.0)(\(try jsonString(job.1))); void 0") { [weak self] _, error in if let error = error { self?.finish(.failure(error)) } } }
+        catch { finish(.failure(error)) }
+    }
+    private func finish(_ result: Result<Any,Error>) {
+        let done = pending; pending = nil; operation = nil; queued = nil; timer?.cancel(); timer = nil
+        done?.resume(with:result)
+    }
+    func cancel(reason: String = "Crypton request cancelled. Your draft is still here.") {
+        finish(.failure(CryptonError(reason))); wallet.cancel(); http?.cancel(); http = nil
+        web.evaluateJavaScript("window.cancelCrypto && cancelCrypto()")
+    }
+    func close() { cancel(); web.configuration.userContentController.removeAllScriptMessageHandlers(); web.stopLoading() }
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, let url = message.frameInfo.request.url, url.isFileURL, url == root?.appendingPathComponent("engine.html"), let string = message.body as? String, string.utf8.count <= 8_000_000, let data = try? object(Data(string.utf8)) else { return }
+        let event = data["event"] as? String ?? ""
+        if event == "ready" { ready = true; dispatch(); return }
+        guard let token = operation else { return }
+        if event == "result" || event == "error" {
+            guard data["id"] as? String == token else { return }
+            if event == "result", let result = data["result"] { finish(.success(result)) }
+            else { finish(.failure(CryptonError(data["message"] as? String ?? "Crypton operation failed."))) }; return
+        }
+        guard data["operation"] as? String == token, let id = data["id"] as? String else { return }
+        Task { [weak self] in
+            guard let self = self else { return }
+            do {
+                let value: Any
+                switch event {
+                case "wallet":
+                    guard let method = data["call"] as? String, let args = data["args"] as? JSON,
+                          ["createHmac","decrypt"].contains(method), sameJSON(args["protocolID"],[2,"crypton"]), args["keyID"] as? String == "1" else { throw CryptonError("Unsupported engine wallet operation.") }
+                    if method == "createHmac" {
+                        guard args["counterparty"] as? String == "self", let encoded = args["data"] as? String,
+                              let source = String(data:try Wire.base64(encoded),encoding:.utf8), source.range(of:"^crypton/messaging-identity/v1/[0-9]{1,3}$",options:.regularExpression) != nil else { throw CryptonError("Invalid receiving identity request.") }
+                    } else { _ = try Wire.identity(args["counterparty"] as? String ?? "") }
+                    value = try await wallet.call(method,args,raw:false)
+                case "walletSdk":
+                    guard let session = delivery, let method = data["call"] as? String, let args = data["args"] as? JSON else { throw CryptonError("Missing delivery authorization.") }
+                    #if DEBUG
+                    NSLog("Crypton delivery wallet: %@",method)
+                    #endif
+                    try store.beforeWallet(session.id,action:session.action,method:method,args:args)
+                    value = try await wallet.call(method,args,raw:true)
+                    // Save the returned transaction even if the user cancelled while the wallet was approving it.
+                    if method == "createAction" { guard let result = value as? JSON else { throw CryptonError("Invalid wallet transaction.") }; try store.walletReturned(session.id,result:result) }
+                case "checkpoint":
+                    guard let session = delivery, let kind = data["kind"] as? String, let v = data["value"] as? JSON else { throw CryptonError("Invalid delivery checkpoint.") }
+                    try store.checkpoint(session.id,action:session.action,kind:kind,value:v); value = true
+                case "http":
+                    guard let session = delivery, let request = data["request"] as? JSON else { throw CryptonError("Missing delivery authorization.") }
+                    value = try await fetch(session,request)
+                case "paymentProof":
+                    guard let session = delivery, session.action == "recover" else { throw CryptonError("Payment proof recovery is unavailable.") }
+                    value = try await paymentProof(store.recoveryTransaction(session.id))
+                default: throw CryptonError("Unknown engine request.")
+                }
+                reply(token,id,value,nil)
+            } catch {
+                #if DEBUG
+                NSLog("Crypton engine %@ failed: %@",event,error.localizedDescription)
+                #endif
+                reply(token,id,nil,error.localizedDescription)
+            }
+        }
+    }
+    private func reply(_ token: String, _ id: String, _ result: Any?, _ error: String?) {
+        guard operation == token else { return }
+        do { web.evaluateJavaScript("walletReply(\(try jsonString(id)),\(try jsonString(result ?? NSNull())),\(try jsonString(error as Any? ?? NSNull())))") }
+        catch { finish(.failure(error)) }
+    }
+    private func fetch(_ session: (id:String,action:String), _ input: JSON) async throws -> Any {
+        guard let address = input["url"] as? String, let url = URL(string:address), let method = input["method"] as? String,
+              let headers = input["headers"] as? [String:String], headers.count <= 128 else { throw CryptonError("Invalid MessageBox request.") }
+        let body = input["body"] as? String ?? ""
+        guard body.utf8.count <= 8_000_000 else { throw CryptonError("MessageBox request too large.") }
+        try store.beforeHTTP(session.id,action:session.action,url:url,method:method,body:body)
+        var request = URLRequest(url:url); request.httpMethod = method
+        if method == "POST" { request.httpBody = Data(body.utf8) }
+        for (key,value) in headers {
+            guard key.range(of:"^[A-Za-z0-9-]{1,100}$",options:.regularExpression) != nil, value.count <= 32_000, !value.contains("\r"), !value.contains("\n"), !["host","connection","content-length","cookie","authorization"].contains(key.lowercased()) else { throw CryptonError("Invalid MessageBox header.") }
+            request.setValue(value,forHTTPHeaderField:key)
+        }
+        let client = BoundedHTTP(limit:2_000_000); http = client; defer { http = nil }
+        let (bodyData,response) = try await client.fetch(request)
+        #if DEBUG
+        NSLog("Crypton delivery HTTP %@ %@: %ld",method,url.path,response.statusCode)
+        #endif
+        var resultHeaders: [String:String] = [:]
+        for (key,value) in response.allHeaderFields { resultHeaders[String(describing:key).lowercased()] = String(describing:value) }
+        return ["status":response.statusCode,"headers":resultHeaders,"body":bodyData.base64EncodedString()] as JSON
+    }
+    private func paymentProof(_ txid:String) async throws -> JSON {
+        let base = "https://api.whatsonchain.com/v1/bsv/main/"
+        func get(_ path:String) async throws -> Data {
+            let (data,response) = try await BoundedHTTP(limit:2_000_000).fetch(URLRequest(url:URL(string:base+path)!))
+            guard response.statusCode == 200 else { throw CryptonError("Public payment proof is unavailable. Keep this saved delivery and retry recovery later.") }
+            return data
+        }
+        let hex = String(decoding:try await get("tx/"+txid+"/hex"),as:UTF8.self).trimmingCharacters(in:.whitespacesAndNewlines)
+        let proofs = try JSONSerialization.jsonObject(with:try await get("tx/"+txid+"/proof/tsc")) as? [JSON]
+        guard let proof = proofs?.first, proofs?.count == 1, proof["txOrId"] as? String == txid,
+              let hash = proof["target"] as? String, hash.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil else { throw CryptonError("Wait for the saved payment's confirmation, then retry recovery.") }
+        let block = try object(await get("block/hash/"+hash))
+        return ["hex":hex,"proof":proof,"block":["hash":block["hash"] ?? NSNull(),"height":block["height"] ?? NSNull(),"merkleroot":block["merkleroot"] ?? NSNull()]]
+    }
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let allowed = navigationAction.request.url == root?.appendingPathComponent("engine.html")
+        decisionHandler(allowed ? .allow : .cancel)
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(.failure(error)) }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { ready = false; finish(.failure(CryptonError("Crypto engine stopped. Clear the wallet session and retry."))) }
+}

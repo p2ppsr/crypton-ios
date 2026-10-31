@@ -1,20 +1,306 @@
-# crypton-ios
- Babbage Message Encryption and Decryption iOS App
+# Crypton for iOS
 
-## Introduction
-The purpose of this app is to illustrate how simple it can be to start building apps using the [Babbage SDK for iOS](https://github.com/p2ppsr/babbage-sdk-ios).
+Native iOS port of [Crypton for Android](https://github.com/p2ppsr/crypton-android), built on the original [p2ppsr/crypton-ios](https://github.com/p2ppsr/crypton-ios) project. Crypton encrypts messages for a recipient, represents encrypted payloads as text or QR images, and opens messages using the recipient's wallet.
 
-With Crypton, you can generate encrypted QR codes that only you and your friends can decode. It's easy to get started - simply sign up for an account and get your identity key. Then, share your identity key QR code with your friends and let them scan it to add your public key to their contacts.
+**The primary workflow is native Metanet Explorer (ME) for wallet operations, MessageBox for delivery, and Crypton for message encryption/decryption.** New installations select native ME and Crypton v2. Existing saved wallet settings are preserved.
 
-Once you and your friends have added each other's public keys to your contacts, you can exchange secure messages by creating encrypted QR codes that only you and your friend can read. To do this, your friend writes you a secret message, then generates a secret QR code using the "new message" button. You can then scan the secret QR code using the "decrypt QR code" button and your friend's public key in your contacts to reveal the secret message.
+The branch includes the SwiftUI application, native ME handoff, Android-compatible v2 engine, MessageBox outbox, share extension, contacts and media import/export, and simulator tests. The original artwork and audio are retained.
 
-## Features
-* Securely log in with your Babbage Identity which is shared across all applications.
-* View your MetaNet portal containing your actions, permissions granted, and more.
-* Encrypt messages using secure keys derived from your identity key specifically for the Crypton protocol.
-* Securely decrypt messages that only you can decrypt.
-* You can even encrypt encrypted messages adding several layers of security!
+![Crypton home screen](docs/screenshots/home.png)
 
-![](./readme-support/CryptonViews.png)
+## Contents
 
-Available now - [Crypton for iOS](https://apps.apple.com/us/app/crypton-secure-qr-generator/id1671880722)!
+- [Requirements and quick start](#requirements-and-quick-start)
+- [Connect Metanet Explorer](#connect-metanet-explorer)
+- [Understand the three identities](#understand-the-three-identities)
+- [Send and receive messages](#send-and-receive-messages)
+- [MessageBox fees and recovery](#messagebox-fees-and-recovery)
+- [Contacts, QR codes and sharing](#contacts-qr-codes-and-sharing)
+- [Legacy and nested messages](#legacy-and-nested-messages)
+- [Other wallet connections](#other-wallet-connections)
+- [Storage and implementation](#storage-and-implementation)
+- [Build and test](#build-and-test)
+- [Verification and limitations](#verification-and-limitations)
+- [Troubleshooting](#troubleshooting)
+- [Repository layout and credits](#repository-layout-and-credits)
+
+## Requirements and quick start
+
+| Component | Requirement |
+| --- | --- |
+| Application deployment target | iOS 16 or later; iPhone and iPad targets |
+| Development | macOS with Xcode 16.4 or later and an installed iOS simulator runtime |
+| Primary wallet | Installed, configured and unlocked Metanet Explorer on the same iPhone/simulator |
+| MessageBox delivery | Network access and any wallet-approved funds required for the delivery |
+| Full automated tests | Node.js plus the pinned disposable fixture dependencies listed below |
+
+Clone this branch and open the project:
+
+```sh
+git clone --branch bob https://github.com/p2ppsr/crypton-ios.git
+cd crypton-ios
+open Crypton.xcodeproj
+```
+
+Select the **Crypton** scheme and an iPhone simulator, then Run. The shared scheme builds and embeds **CryptonShare** automatically. Install/configure ME separately for the live wallet workflow; the repository does not include a funded wallet or wallet credentials.
+
+There are no CocoaPods or Swift package dependencies to resolve for the active application. The old `Podfile`, package resolution file and excluded UIKit/storyboard sources are retained as historical project material. The current app uses packaged engine resources and system frameworks.
+
+## Connect Metanet Explorer
+
+1. Open and unlock ME on the same iOS device or simulator.
+2. In Crypton, choose **Settings → Wallet connection → Metanet Explorer → Save wallet connection** if another connection is currently selected.
+3. Tap **Connect your wallet** or **Open wallet**.
+4. Review the requested identity/protocol permission in ME and approve the access you intend to grant. Permission approval and payment approval are separate.
+5. Tap **Return to Crypton** after the request completes. If that link does not open Crypton in your ME build, use the iOS app switcher to return.
+
+Wallet-dependent operations can require several trips between Crypton and ME. Return to Crypton after each completed request so the next operation can begin from the foreground.
+
+The native connection uses ME's `metanet://browser?url=…` route and CWI bridge. Crypton hosts a packaged request page on a temporary loopback listener. The ME wallet performs the approved operation and returns its result through that local bridge. Details are in [the native handoff notes](docs/ME_IOS_HANDOFF.md).
+
+## Understand the three identities
+
+These public keys serve different purposes:
+
+| Identity | Where to find it | Purpose |
+| --- | --- | --- |
+| Crypton receiving key | **My identity**, with v2 selected | Give this to someone encrypting a v2 message for you. It is derived specifically for Crypton. |
+| ME wallet identity | **MessageBox outbox → My delivery wallet key** | Give this separately to someone delivering a notification to your ME wallet through MessageBox. |
+| One-use sender key | The `sender` field of a v2 envelope | Generated freshly for each sealed message; used when decrypting that envelope. It is not your persistent MessageBox inbox address. |
+
+For a MessageBox send to another person, obtain both their **Crypton receiving key** and their **ME wallet identity**. Encryption uses the first; delivery uses the second. Crypton remembers public mappings entered for later deliveries.
+
+When legacy mode is enabled, **My identity** instead shows the wallet identity used by the legacy format.
+
+## Send and receive messages
+
+### Send a v2 message
+
+1. Select **New message**.
+2. Choose **Myself**, enter the recipient's Crypton receiving key, or select a saved contact.
+3. Enter the plaintext and choose **Encrypt message**. Complete any ME requests and return to Crypton.
+4. Share the resulting encrypted text or QR image, or choose **Send with MessageBox**.
+5. For MessageBox, enter the recipient's ME wallet identity, choose **Check delivery fee**, and review the quote.
+6. Choose **Review payment in wallet and send**, review ME's full payment total, and approve it only if it matches your intended send.
+7. Return to Crypton to complete delivery. The outbox retains the encrypted payload, payment state and acceptance receipt.
+
+Use **Myself** for both encryption and delivery when sending to your own active wallet. New v2 messages use a fresh one-use sender key. Keep your own plaintext copy if you need to retain it; an outgoing message for another recipient is intended to be opened by that recipient.
+
+### Receive and decrypt
+
+For MessageBox delivery, open the notification in **ME** and transfer its enclosed Crypton payload into Crypton. The application does not present a separate automatically synchronized MessageBox inbox.
+
+Crypton accepts encrypted payloads through:
+
+- **Decrypt message** and the encrypted-text editor;
+- **Import encrypted file**;
+- **Import QR image** using the private system Photos picker;
+- the camera QR scanner;
+- the **Crypton** share extension in the iOS share sheet.
+
+Choose **Decrypt message**, approve the wallet operation in ME when requested, and return to see the plaintext. V2 supplies its sender key in the envelope. Wrong recipients fail to decrypt.
+
+Incoming shares are queued in the app's shared container. Open Crypton to import the next item. **Settings → Import next shared message** handles additional queued items. The share extension supports encrypted text or one selected image; use the contact/recipient identity controls to import public identity QR codes.
+
+## MessageBox fees and recovery
+
+The native client uses `https://messagebox.babbage.systems` and the `notifications` inbox. It validates the authenticated delivery-agent identity and the quoted payment destinations before proceeding.
+
+**The MessageBox quote covers the server and recipient fees. ME may add wallet storage and network fees. Review the full total in the wallet before approving.** A small MessageBox quote is not a promise of the same final wallet total. Production sending can spend real funds even when the applications run in emulators.
+
+The encrypted outbox persists across app restarts:
+
+| State | Meaning and next action |
+| --- | --- |
+| `DRAFT` | Encrypted message saved; obtain a quote. |
+| `QUOTED` | Reviewed payment plan saved; send or refresh the quote. A changed/expired quote cannot authorize the previous payment plan. |
+| `PAYMENT_REQUESTED` | The wallet may have started a payment. **Check wallet history**; this record cannot request another payment. |
+| `PAYMENT_RETURNED` | A wallet transaction has been saved; resume delivery using that result. |
+| `PAID` | Payment bytes and reviewed outputs have been validated. |
+| `SUBMITTING` | Delivery may have reached MessageBox; retry with the saved transaction and message ID. |
+| `SENT` | MessageBox returned an acceptance receipt. This does not mean the recipient opened the message. |
+
+Crypton writes `PAYMENT_REQUESTED` **before** calling the wallet's `createAction`. Once payment might have started, the same record cannot create a second payment. Returned transaction data is saved before delivery processing continues.
+
+If a wallet response is lost, history recovery looks for this delivery's labelled transaction. For one matching completed payment, Crypton can retrieve its confirmed public transaction and Merkle proof, check the proof against its block root, validate the reviewed outputs, and save the recovered transaction for resubmission. Public proof retrieval uses the fixed Whatsonchain mainnet API. If confirmation or proof is unavailable, keep the record and retry recovery later. An empty history response does not prove cancellation.
+
+If sending is interrupted, use the existing outbox record and **Retry delivery with saved payment** where available. Avoid creating a replacement paid draft merely because an earlier send has no visible receipt yet.
+
+## Contacts, QR codes and sharing
+
+- Save a contact name and compressed public key; native validation checks the secp256k1 point.
+- Import a selected phone contact with its key in a URL or instant-message field. The importer accepts a bare key or `crypton:<public-key>`.
+- Export contacts as vCards and delete saved Crypton contacts from the contact list.
+- Generate QR images for identities and encrypted output. If the payload exceeds QR capacity, share encrypted text instead.
+- Import QR images through Photos or Files. PNG/JPEG file handling and a genuine HEIC Photos import are covered by tests.
+- Use **Copy text**, **Share text**, **Share QR image**, **Save to Files**, and **Save Image** where iOS offers them.
+
+The Photos picker provides only the selected image. Saving QR images uses the separate add-only Photos permission. Other destinations depend on the applications, accounts and devices configured in iOS.
+
+Music and effects can be disabled in **Settings → Music and sound effects**. Muting or backgrounding releases the app's players. Interruption handling respects the mute setting, foreground state and the system's permission to resume playback.
+
+## Legacy and nested messages
+
+Enable **Settings → Legacy iPhone message format** for the original raw-base64 format. Legacy messages use the wallet identity, protocol `[1, "crypton"]`, key ID `"1"`, and UTF-8 plaintext transported as base64. Both people must use the corresponding wallet identities. Raw ciphertext contains no sender identity, so Crypton requires explicit sender selection before decrypting it, including after file import.
+
+V2 uses protocol `[2, "crypton"]`, key ID `"1"`, an app-derived receiving identity and a one-use sender. Its envelope has exactly these fields:
+
+```json
+{
+  "protocol": "crypton",
+  "version": 2,
+  "ciphertext": "<base64 ciphertext>",
+  "sender": "<compressed one-use public key>"
+}
+```
+
+The envelope contains no public recipient field. App-derived decryption is attempted first, followed by the compatible wallet-root fallback. The protocol engine matches the Android implementation.
+
+Nested encrypted content opens one layer at a time. After opening an outer layer, Crypton shows its note and encrypted inner envelope. **Open inner layer** explicitly imports that envelope for the next decryption. The UI supports opening nested content; it does not add a separate nested-message composer.
+
+## Other wallet connections
+
+| Connection | Role and status |
+| --- | --- |
+| **Metanet Explorer** | Default and primary workflow; live emulator delivery/decryption verified in both directions. |
+| **BRC-100 JSON** | Optional direct API connection for a compatible wallet exposing an HTTPS JSON endpoint. SDK-backed loopback integration is tested. |
+| **Original portal** | Legacy compatibility option for `https://mobile-portal.babbage.systems`. Its TLS connection failed during testing; live portal login/messaging remains unverified. |
+
+For JSON mode, choose **Settings → Wallet connection → BRC-100 JSON**, enter the endpoint and save. Requests identify the app as `https://crypton.ios` through Origin/Originator headers. Release endpoint configuration requires HTTPS. Debug builds additionally allow explicit localhost/`127.0.0.1` ports for disposable fixtures. Redirects are rejected, response sizes are bounded and cookies are not used by the JSON transport.
+
+The original portal adapter preserves the historical `iOS_<bundle identifier>` originator and UUID-correlated callbacks. It is not required by the native ME workflow. Selecting it enables the legacy format; selecting and saving ME or JSON selects v2.
+
+## Storage and implementation
+
+| Data | Handling |
+| --- | --- |
+| Wallet root private keys | Remain in the external wallet. |
+| App-derived receiving material and ephemeral sender keys | Held in the isolated engine's memory; not saved as key files by Crypton. |
+| Plaintext drafts and decrypted results | In memory; cleared by **Done** or **Clear wallet session**. |
+| Public contacts, wallet connection and delivery-key mappings | Persist in application preferences. |
+| Encrypted outbox, saved payment data and receipts | Atomic, file-protected application storage excluded from backup. |
+| Incoming shared encrypted payloads | File-protected App Group queue, excluded from backup; consumed on successful import. |
+
+Clearing a wallet session retains contacts and the outbox and does not sign the external wallet out. OS file protection can make protected records unavailable while a physical device is locked; hardware-specific behavior was not validated in simulator QA.
+
+The engine runs only packaged assets in a nonpersistent WKWebView with a restrictive CSP. JavaScript has no direct network path: native code validates wallet methods, counterparties, delivery hosts, payment arguments and HTTP requests. The ME listener binds to loopback, uses a fresh 256-bit capability for each request, validates response UUID/Origin/Host, and closes after completion or cancellation. Wallet results do not travel in callback URLs.
+
+Wallet requests are bounded to five minutes, enclosing engine operations to fifteen minutes, and SDK authentication handoffs to ten minutes. HTTP has separate request/resource deadlines. Ending iOS's finite background-task window preserves the pending response until foreground return or the request deadline. No background audio mode is used to keep the wallet bridge alive.
+
+The packaged `@bsv/sdk` is **3.2.1**. Two authentication deadlines are adapted for iOS handoffs; see [the SDK patch notes](Crypton/Engine/vendor/CRYPTON_PATCHES.md).
+
+## Build and test
+
+### Simulator build
+
+```sh
+xcodebuild -project Crypton.xcodeproj -scheme Crypton \
+  -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath /tmp/crypton-ios-build CODE_SIGNING_ALLOWED=NO build
+```
+
+### Device signing and unsigned Release build
+
+For a physical device, select your own development team for **Crypton** and **CryptonShare** and provision the same App Group on both targets. The current identifiers are:
+
+- app: `com.projectbabbage.Crypton`;
+- extension: `com.projectbabbage.Crypton.Share`;
+- App Group: `group.com.projectbabbage.Crypton`.
+
+If changing the App Group, update both entitlements and `IncomingShareStore.group`. Device provisioning and physical-device execution remain to be verified by the installing developer.
+
+```sh
+xcodebuild -project Crypton.xcodeproj -scheme Crypton -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -derivedDataPath /tmp/crypton-ios-release CODE_SIGNING_ALLOWED=NO build
+```
+
+### Automated tests
+
+```sh
+scripts/test-ios.sh
+```
+
+The runner creates or reuses only a simulator named **Crypton-iOS-Test**, disables parallel tests, and uses ad-hoc signing to exercise the share extension. SDK-dependent tests report skips when their fixture is unavailable.
+
+For the complete fixture-backed suite:
+
+```sh
+npm install --prefix /tmp/crypton-sdk --ignore-scripts --no-audit --no-fund \
+  --package-lock=false @bsv/sdk@3.2.1 @bsv/auth-express-middleware@2.2.9 express@4.21.2
+
+CRYPTON_SDK_ROOT=/tmp/crypton-sdk \
+CRYPTON_DERIVED_DATA=/tmp/crypton-ios-tests \
+CRYPTON_RESULT_BUNDLE=/tmp/crypton-ios-tests.xcresult \
+scripts/test-ios.sh
+```
+
+Choose a new result-bundle path for each run. The script stages the public HEIC fixture, starts loopback services on ports **18776** and **18777**, runs the independent bundled-engine interoperability check and Xcode tests, then stops its fixture process. Those ports must be available. Node.js 22 is used by the checked-in CI workflow.
+
+Fixtures use disposable SDK wallets and synthetic transactions. They do not access installed ME profiles, broadcast transactions or spend real funds. Explicit Debug-only test arguments isolate the test share inbox and payment journal; the fixture delivery override is compiled out of Release.
+
+[GitHub Actions](.github/workflows/ios.yml) runs the fixture-backed tests and an unsigned iPhone build on pushes and pull requests. A local passing run does not imply the hosted workflow has already passed for a newly pushed commit.
+
+## Verification and limitations
+
+Recorded local verification on **30 October 2026**:
+
+| Check | Result |
+| --- | --- |
+| Native/integration tests | 20 passed |
+| UI tests, including Files/Photos/HEIC, nested content, sharing and force-quit recovery | 11 passed |
+| Total fixture-backed suite | **31 passed; no skips or failures** |
+| Standalone bundled-engine/independent SDK interoperability | Passed |
+| Simulator and unsigned iPhone Release builds | Passed |
+| Installed iOS ME → production MessageBox → Android ME → Crypton decryption | Passed on emulators |
+| Reverse Android → iOS MessageBox delivery and native ME decryption | Passed on emulators |
+| Legacy messaging between installed ME wallets | Passed in both directions |
+
+The live checks used separately reviewed wallet permissions and manually approved payments. They are distinct from the automated, unfunded fixtures. Wallet-specific receipts and raw local handoff experiments are not published in this branch.
+
+Known boundaries:
+
+- The original portal failed TLS setup in the test environment; its login and message operations remain unverified.
+- Phone-contact/vCard and clipboard round trips were exercised. Reminders received a test draft; print and Watch flows opened previews. Completing account-backed sharing, real printing and Watch installation was not verified.
+- Insufficient funds, denied permissions, changed quotes, dropped connections and process termination during payment were tested with disposable wallets. Those failures were not induced on the funded production wallets.
+- Audio tests use real simulator players and simulated interruption notifications. Physical camera scanning, cellular interruptions, device locking/provisioning and a full iPad/device matrix remain outside emulator coverage.
+
+See [port verification](docs/PORT_VERIFICATION.md), [remaining-functions QA](docs/REMAINING_FUNCTIONS_QA.md) and [native ME handoff](docs/ME_IOS_HANDOFF.md) for more detail.
+
+## Troubleshooting
+
+| Symptom | Action |
+| --- | --- |
+| ME does not open | Install/configure/unlock ME on the same device and select the native ME connection in Crypton. |
+| Return link has no effect | After ME finishes, return using the iOS app switcher. |
+| Wallet request times out | Return to Crypton and retry; if payment may have started, use the existing outbox record's recovery action. |
+| MessageBox notification never arrives | Check the recipient's **wallet identity** separately from the Crypton receiving key; check whether the outbox has an acceptance receipt. |
+| Ciphertext will not open | Use the intended recipient wallet, retain the complete envelope, and check permissions. Legacy ciphertext additionally needs the sender's wallet identity. |
+| Final wallet total exceeds the quote | Review ME's storage/network charges as well as the MessageBox server/recipient fees. |
+| Recovery has no public proof yet | Keep the uncertain record and retry after confirmation; do not create a replacement payment solely because history/proof is incomplete. |
+| Shared item is not imported immediately | Open Crypton, finish/cancel any active operation, then use **Import next shared message**. |
+| QR exceeds capacity | Share the encrypted text or save it to a file. |
+| Original portal reports an SSL error | Use the verified native ME workflow; the legacy portal requires separate TLS/service diagnosis. |
+| Fixture tests fail to start | Check Node dependencies, an available iOS runtime and free loopback ports 18776/18777. |
+
+## Repository layout and credits
+
+```text
+Crypton/Native/          SwiftUI model/screens, wallet adapters, QR/media helpers,
+                        bounded HTTP, native ME listener and durable outbox
+Crypton/Engine/          Packaged v2/delivery engines and ME request page
+Crypton/Engine/vendor/   Pinned SDK bundle, patch notes, licenses and notices
+Crypton/Shared/          Incoming App Group share queue
+CryptonShare/           iOS share extension
+CryptonTests/           Native, SDK, bridge and payment tests
+CryptonUITests/         Simulator UI and extension round trips
+scripts/               Test runner, disposable wallet/MessageBox fixtures,
+                        interoperability check and public HEIC fixture
+docs/                  Architecture, coverage and synthetic UI screenshots
+```
+
+The original project supplies application identity and assets; the Android implementation supplies current protocol behavior. Historical UIKit/storyboard files are retained but excluded from the active build.
+
+Bundled SDK licensing and attribution are retained in [the vendor directory](Crypton/Engine/vendor/), including [third-party notices](Crypton/Engine/vendor/THIRD_PARTY_NOTICES.md) and [SDK license](Crypton/Engine/vendor/LICENSE.txt).
+
+Music: **“Phantom from Space” — Kevin MacLeod**, [incompetech.com](https://incompetech.com/), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Original audio files are unchanged.

@@ -90,3 +90,11 @@ fastlane/test_output
 # https://github.com/johnno1962/injectionforxcode
 
 iOSInjectionProject/
+
+# Local wallet experiments and wallet-specific verification evidence
+/handoff/
+/crypton-inner-for-ty.json
+/docs/interop/
+
+# Local Xcode test result bundles
+*.xcresult/

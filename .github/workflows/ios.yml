@@ -1,0 +1,20 @@
+name: iOS
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install disposable SDK fixture
+        run: npm install --prefix "$RUNNER_TEMP/crypton-sdk" --ignore-scripts --no-audit --no-fund --package-lock=false @bsv/sdk@3.2.1 @bsv/auth-express-middleware@2.2.9 express@4.21.2
+      - name: Protocol, SDK transport and native UI tests
+        env:
+          CRYPTON_SDK_ROOT: ${{ runner.temp }}/crypton-sdk
+          CRYPTON_DERIVED_DATA: ${{ runner.temp }}/crypton-derived
+        run: scripts/test-ios.sh
+      - name: Unsigned iPhone build
+        run: xcodebuild -project Crypton.xcodeproj -scheme Crypton -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/crypton-device" CODE_SIGNING_ALLOWED=NO build

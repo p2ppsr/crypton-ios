@@ -1,0 +1,234 @@
+import XCTest
+import WebKit
+@testable import Crypton
+
+final class MEWalletTests: XCTestCase {
+    @MainActor func testStrictHTTPParserAndDeepLink() throws {
+        let first = Data("POST /cap/result HTTP/1.1\r\nHost: localhost:1\r\nContent-Length: 2\r\n\r\n{".utf8)
+        XCTAssertNil(try LoopbackRequest.parse(first))
+        XCTAssertEqual(try LoopbackRequest.parse(first + Data("}".utf8))?.body,Data("{}".utf8))
+        for value in ["GET / HTTP/1.1\r\nHost: x\r\nHost: y\r\n\r\n", "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n", "POST / HTTP/1.1\r\nContent-Length: 8000001\r\n\r\n", "GET http://evil/ HTTP/1.1\r\n\r\n"] { XCTAssertThrowsError(try LoopbackRequest.parse(Data(value.utf8))) }
+        let target = URL(string:"http://localhost:1234/random-capability/")!
+        let link = try MEWallet.handoffURL(target)
+        XCTAssertEqual(link.scheme,"metanet"); XCTAssertEqual(link.host,"browser")
+        XCTAssertEqual(URLComponents(url:link,resolvingAgainstBaseURL:false)?.queryItems?.first?.value,target.absoluteString)
+    }
+    @MainActor func testCapabilityOriginUUIDAndReturnBoundary() async throws {
+        let launched = expectation(description:"ME opened")
+        var link:URL?, foreground = false
+        let me = MEWallet(open:{ link = $0; launched.fulfill(); return true },foreground:{ foreground },backgroundTime:false)
+        let job = Task { try await me.call("getPublicKey",[:]) }
+        await fulfillment(of:[launched],timeout:5)
+        let page = try XCTUnwrap(URLComponents(url:XCTUnwrap(link),resolvingAgainstBaseURL:false)?.queryItems?.first?.value.flatMap(URL.init(string:)))
+        var request = URLRequest(url:page.appendingPathComponent("next"))
+        let (bytes,http) = try await BoundedHTTP().fetch(request)
+        XCTAssertEqual(http.statusCode,200)
+        let state = try object(bytes), command = try XCTUnwrap(state["command"] as? JSON)
+        XCTAssertEqual(command["call"] as? String,"getPublicKey")
+        let key = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        let body: JSON = ["type":"CWI","isInvocation":false,"id":command["id"]!,"status":"success","result":["publicKey":key]]
+        request.url = page.appendingPathComponent("result"); request.httpMethod = "POST"; request.httpBody = try jsonData(body)
+        request.setValue("application/json",forHTTPHeaderField:"Content-Type"); request.setValue("https://evil.example",forHTTPHeaderField:"Origin")
+        let (_,refused) = try await BoundedHTTP().fetch(request); XCTAssertEqual(refused.statusCode,403)
+        request.setValue(me.origin,forHTTPHeaderField:"Origin")
+        var wrong = body; wrong["id"] = UUID().uuidString; request.httpBody = try jsonData(wrong)
+        let (_,stale) = try await BoundedHTTP().fetch(request); XCTAssertEqual(stale.statusCode,409)
+        wrong = body; wrong["isInvocation"] = 0; request.httpBody = try jsonData(wrong)
+        let (_,numeric) = try await BoundedHTTP().fetch(request); XCTAssertEqual(numeric.statusCode,409)
+        request.httpBody = try jsonData(body)
+        let (_,accepted) = try await BoundedHTTP().fetch(request); XCTAssertEqual(accepted.statusCode,200)
+        let (_,duplicate) = try await BoundedHTTP().fetch(request); XCTAssertEqual(duplicate.statusCode,409)
+        XCTAssertFalse(me.token.isEmpty,"Response must wait for foreground return")
+        XCTAssertFalse(me.returned(URL(string:"crypton-wallet://return/stale")!))
+        let capability = me.token
+        foreground = true; XCTAssertTrue(me.returned(URL(string:"crypton-wallet://return/"+capability)!))
+        let actual = try await job.value
+        XCTAssertEqual(actual as? String,key)
+        XCTAssertTrue(me.token.isEmpty)
+        XCTAssertFalse(me.returned(URL(string:"crypton-wallet://return/"+capability)!))
+    }
+    @MainActor func testCancellationAndUnavailableME() async throws {
+        let absent = MEWallet(open:{ _ in false },backgroundTime:false)
+        do { _ = try await absent.call("isAuthenticated",[:]); XCTFail("Unavailable ME succeeded") } catch { XCTAssertTrue(error.localizedDescription.contains("Install and unlock")) }
+        let opened = expectation(description:"Request launched")
+        let me = MEWallet(open:{ _ in opened.fulfill(); return true },backgroundTime:false)
+        let job = Task { try await me.call("waitForAuthentication",[:]) }
+        await fulfillment(of:[opened],timeout:5); me.cancel()
+        do { _ = try await job.value; XCTFail("Cancelled request succeeded") } catch { }
+        XCTAssertTrue(me.token.isEmpty)
+    }
+    @MainActor func testForegroundReturnWithoutCallbackLink() async throws {
+        let opened = expectation(description:"ME request opened")
+        let me = MEWallet(open:{ _ in opened.fulfill(); return true },foreground:{ false },backgroundTime:false)
+        let job = Task { try await me.call("isAuthenticated",[:]) }
+        await fulfillment(of:[opened],timeout:5)
+        let headers = ["host":String(me.origin.dropFirst("http://".count))]
+        let state = try object(me.serve(LoopbackRequest(method:"GET",path:"/"+me.token+"/next",headers:headers,body:Data())).body)
+        let command = try XCTUnwrap(state["command"] as? JSON)
+        var postHeaders = headers; postHeaders["origin"] = me.origin; postHeaders["content-type"] = "application/json"
+        let body:JSON = ["type":"CWI","isInvocation":false,"id":command["id"]!,"status":"success","result":["authenticated":true]]
+        XCTAssertEqual(me.serve(LoopbackRequest(method:"POST",path:"/"+me.token+"/result",headers:postHeaders,body:try jsonData(body))).status,200)
+        me.resumed()
+        let result = try await job.value; XCTAssertEqual(result as? Bool,true)
+    }
+    @MainActor func testSharedStoreCrossInstanceValidationAndImageImport() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let writer = try IncomingShareStore(directory:directory), reader = try IncomingShareStore(directory:directory)
+        XCTAssertThrowsError(try writer.stage(text:"Unencrypted private draft"))
+        let text = Data(repeating:7,count:64).base64EncodedString()
+        let staged = try writer.stage(text:text)
+        XCTAssertEqual(try reader.pending(),[staged])
+        XCTAssertEqual(try String(contentsOf:staged,encoding:.utf8),text)
+        let image = try XCTUnwrap(QRTools.image(text)), source = directory.appendingPathComponent("source.image")
+        let archive = try NSKeyedArchiver.archivedData(withRootObject:image,requiringSecureCoding:true)
+        XCTAssertThrowsError(try writer.stage(imageData:archive),"A UIKit archive must not be saved as an encoded image")
+        try XCTUnwrap(image.pngData()).write(to:source)
+        let incoming = try writer.stage(image:source)
+        XCTAssertEqual(try QRTools.read(incoming),text)
+        XCTAssertTrue(try directory.resourceValues(forKeys:[.isExcludedFromBackupKey]).isExcludedFromBackup == true)
+        try reader.remove(staged); XCTAssertEqual(try reader.pending(),[incoming])
+    }
+}
+
+/// A real WKWebView running the shipped ME request page. The official CWI bridge contract
+/// is backed by a separate SDK wallet fixture; this is not the installed ME application.
+@MainActor private final class MEPageFixture: NSObject,WKScriptMessageHandler,WKNavigationDelegate {
+    private var web:WKWebView!
+    private var active = false
+    private(set) var wallet:MEWallet!
+    private(set) var requests = 0
+    override init() {
+        super.init()
+        let content = WKUserContentController(); content.add(self,name:"fixtureME")
+        content.addUserScript(WKUserScript(source:"window.ReactNativeWebView={postMessage:value=>window.webkit.messageHandlers.fixtureME.postMessage(value)}",injectionTime:.atDocumentStart,forMainFrameOnly:true))
+        content.addUserScript(WKUserScript(source:"setInterval(()=>{const link=document.getElementById('return');if(link&&!link.hidden)link.click()},100)",injectionTime:.atDocumentEnd,forMainFrameOnly:true))
+        let config = WKWebViewConfiguration(); config.userContentController = content; config.websiteDataStore = .nonPersistent()
+        web = WKWebView(frame:.zero,configuration:config); web.navigationDelegate = self
+        wallet = MEWallet(open:{ [weak self] url in
+            guard let self = self, url.scheme == "metanet", url.host == "browser", let target = URLComponents(url:url,resolvingAgainstBaseURL:false)?.queryItems?.first(where:{ $0.name == "url" })?.value.flatMap(URL.init(string:)) else { return false }
+            self.active = false; self.web.load(URLRequest(url:target)); return true
+        },foreground:{ [weak self] in self?.active ?? false },backgroundTime:false)
+    }
+    func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, let data = message.body as? String, let command = try? object(Data(data.utf8)), let id = command["id"] as? String,
+              command["type"] as? String == "CWI", command["isInvocation"] as? Bool == true, let method = command["call"] as? String, let args = command["args"] as? JSON else { wallet.cancel(); return }
+        requests += 1
+        Task {
+            var response:JSON = ["type":"CWI","isInvocation":false,"id":id]
+            do {
+                let result = try await JSONWallet(endpoint:URL(string:"http://127.0.0.1:18776")!).call(method,args,raw:true)
+                response["status"] = "success"; response["result"] = result
+            } catch { response["status"] = "error"; response["description"] = "Disposable fixture declined request"; response["code"] = 1 }
+            do { _ = try await web.evaluateJavaScript("window.postMessage(\(try jsonString(try jsonString(response))),'*');void 0") }
+            catch { wallet.cancel() }
+        }
+    }
+    func webView(_ webView:WKWebView,decidePolicyFor navigationAction:WKNavigationAction,decisionHandler:@escaping (WKNavigationActionPolicy) -> Void) {
+        if let url = navigationAction.request.url, url.scheme == "crypton-wallet" { active = true; _ = wallet.returned(url); decisionHandler(.cancel) }
+        else { decisionHandler(.allow) }
+    }
+    func webView(_ webView:WKWebView,didFailProvisionalNavigation navigation:WKNavigation!,withError error:Error) { wallet.cancel() }
+    func close() { wallet.cancel(); web.configuration.userContentController.removeAllScriptMessageHandlers(); web.stopLoading() }
+}
+
+final class MEAndDeliveryIntegrationTests: XCTestCase {
+    @MainActor private func fixture(_ path:String,_ args:JSON = [:]) async throws -> JSON {
+        var request = URLRequest(url:URL(string:"http://127.0.0.1:18776/test/"+path)!)
+        request.httpMethod = "POST"; request.httpBody = try jsonData(args)
+        request.setValue("https://crypton.ios",forHTTPHeaderField:"Origin"); request.setValue("application/json",forHTTPHeaderField:"Content-Type")
+        let (data,response) = try await BoundedHTTP().fetch(request)
+        guard response.statusCode == 200 else { throw CryptonError("Fixture request rejected.") }; return try object(data)
+    }
+    @MainActor private func available() async throws {
+        do { _ = try await fixture("recipient") } catch { throw XCTSkip("Start the SDK/MessageBox fixtures to run native ME integration tests.") }
+    }
+    @MainActor func testMEPageIdentityCryptoAndDenial() async throws {
+        try await available()
+        let page = MEPageFixture(); defer { page.close() }
+        _ = try await page.wallet.call("waitForAuthentication",[:])
+        let engine = CryptoEngine(wallet:page.wallet,store:DeliveryStore()); defer { engine.close() }
+        let identity = try await engine.run("identity") as! String
+        XCTAssertNoThrow(try Wire.identity(identity))
+        let text = "Native ME page round trip: café 🌍"
+        let sealed = try await engine.run("seal",text:text) as! String
+        let opened = try await engine.run("open",text:sealed) as! JSON
+        XCTAssertEqual(opened["text"] as? String,text)
+        _ = try await fixture("deny-next")
+        do { _ = try await page.wallet.call("getPublicKey",[:]); XCTFail("ME denial ignored") } catch { XCTAssertTrue(error.localizedDescription.contains("declined")) }
+        XCTAssertGreaterThanOrEqual(page.requests,5)
+    }
+    @MainActor func testNativePaidDeliveryRecoveryWithoutSecondPayment() async throws {
+        try await available()
+        let config = try await fixture("delivery-config"), directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let store = try DeliveryStore(directory:directory,fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
+        let page = MEPageFixture(); defer { page.close() }
+        let engine = CryptoEngine(wallet:page.wallet,store:store); defer { engine.close() }
+        let envelope = try await engine.run("seal",text:"Disposable native delivery test") as! String
+        var req = URLRequest(url:URL(string:store.serviceHost+"/permissions/quote")!); req.timeoutInterval = 2
+        do { _ = try await BoundedHTTP().fetch(req) } catch { throw XCTSkip("Start scripts/messagebox-fixture.cjs to run delivery tests.") }
+        let before = integer(try await fixture("delivery-stats")["payments"])!
+        let id = try store.create(envelope:envelope,key:"self",recipient:"self",name:"Disposable self")
+        _ = try await engine.deliver("prepare",id:id)
+        let prepared = try XCTUnwrap(try store.get(id)["prepared"] as? JSON)
+        XCTAssertEqual(try store.feeTotal(prepared["quote"] as! JSON),20)
+        _ = try await fixture("drop-next-delivery")
+        do { _ = try await engine.deliver("send",id:id) } catch { print("Expected interrupted delivery: " + error.localizedDescription) }
+        let interrupted = try store.get(id)
+        if interrupted["state"] as? String != "SENT" {
+            XCTAssertEqual(interrupted["state"] as? String,"SUBMITTING")
+            _ = try await engine.deliver("resume",id:id)
+        }
+        XCTAssertEqual(try store.get(id)["state"] as? String,"SENT")
+        do { _ = try await engine.deliver("send",id:id); XCTFail("Sent record created another payment") } catch { }
+        let stats = try await fixture("delivery-stats"); XCTAssertEqual(integer(stats["payments"]),before+1)
+        let uncertain = try store.create(envelope:envelope,key:"self",recipient:"self",name:"Lost wallet response")
+        _ = try await engine.deliver("prepare",id:uncertain)
+        _ = try await fixture("lose-next-payment")
+        do { _ = try await engine.deliver("send",id:uncertain); XCTFail("Lost wallet response unexpectedly confirmed") } catch { }
+        XCTAssertEqual(try store.get(uncertain)["state"] as? String,"PAYMENT_REQUESTED")
+        do { _ = try await engine.deliver("send",id:uncertain); XCTFail("Uncertain payment was repeated") } catch { }
+        _ = try await engine.deliver("recover",id:uncertain)
+        let history = try XCTUnwrap(try store.get(uncertain)["walletHistory"] as? JSON)
+        XCTAssertEqual((history["transactions"] as? [JSON])?.count,1)
+        let final = try await fixture("delivery-stats"); XCTAssertEqual(integer(final["payments"]),before+2)
+    }
+    @MainActor func testChangedQuoteDeniedPaymentInsufficientFundsAndOffline() async throws {
+        try await available()
+        let config = try await fixture("delivery-config"), directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let store = try DeliveryStore(directory:directory,fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
+        let wallet = JSONWallet(endpoint:URL(string:"http://127.0.0.1:18776")!)
+        let engine = CryptoEngine(wallet:wallet,store:store); defer { engine.close() }
+        let envelope = try await engine.run("seal",text:"Disposable failure tests") as! String
+        func draft() async throws -> String {
+            let id = try store.create(envelope:envelope,key:"self",recipient:"self",name:"Failure fixture")
+            _ = try await engine.deliver("prepare",id:id); return id
+        }
+        let before = integer(try await fixture("delivery-stats")["payments"])!
+        let changed = try await draft()
+        _ = try await fixture("change-delivery-fee",["changed":true])
+        do { _ = try await engine.deliver("send",id:changed); XCTFail("Changed quote was paid") } catch { }
+        _ = try await fixture("change-delivery-fee",["changed":false])
+        XCTAssertEqual(try store.get(changed)["state"] as? String,"QUOTED")
+        for failure in ["insufficient","denied"] {
+            let id = try await draft()
+            _ = try await fixture("payment-failure",["kind":failure])
+            do { _ = try await engine.deliver("send",id:id); XCTFail("Rejected payment succeeded") } catch { }
+            XCTAssertEqual(try store.get(id)["state"] as? String,"PAYMENT_REQUESTED")
+            let reopened = try DeliveryStore(directory:directory,fixtureHost:store.serviceHost,fixtureAgent:store.serviceAgent)
+            XCTAssertThrowsError(try reopened.begin(id,action:"send"),"An unsuccessful wallet response must not authorize a second payment")
+        }
+        let revoked = try await draft()
+        _ = try await fixture("deny-next")
+        do { _ = try await engine.deliver("send",id:revoked); XCTFail("Revoked wallet request succeeded") } catch { }
+        XCTAssertEqual(try store.get(revoked)["state"] as? String,"QUOTED")
+        let offline = try await draft()
+        _ = try await fixture("offline-next")
+        do { _ = try await engine.deliver("send",id:offline); XCTFail("Offline wallet request succeeded") } catch { }
+        XCTAssertEqual(try store.get(offline)["state"] as? String,"QUOTED")
+        let after = try await fixture("delivery-stats")
+        XCTAssertEqual(integer(after["payments"]),before)
+    }
+}

@@ -1,0 +1,122 @@
+// Test-only BRC-100 wallet. Ephemeral SDK keys; no real accounts or transactions.
+const http = require('node:http');
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const fs = require('node:fs');
+const load = createRequire(path.resolve(process.argv[2], 'package.json'));
+if (JSON.parse(fs.readFileSync(path.resolve(process.argv[2], 'node_modules/@bsv/sdk/package.json'), 'utf8')).version !== '3.2.1') throw new Error('Use @bsv/sdk 3.2.1 for this fixture');
+const { ProtoWallet, PrivateKey, Utils, Transaction, Script } = load('@bsv/sdk');
+const alice = new ProtoWallet(PrivateKey.fromRandom());
+const bob = new ProtoWallet(PrivateKey.fromRandom());
+const stranger = new ProtoWallet(PrivateKey.fromRandom());
+let denyNext = false;
+let redirectNext = false;
+let losePayment = false, holdPayment = false, paymentFailure = null, offlineNext = false; const actionHistory = [];
+const deliveryFixture={payments:0,paymentAttempts:0,drop:false,changedFee:false,receiptCount:0};
+const protocol = { protocolID: [1, 'crypton'], keyID: '1' };
+async function forIOS(content) {
+  const {hmac}=await alice.createHmac({protocolID:[2,'crypton'],keyID:'1',counterparty:'self',data:Utils.toArray('crypton/messaging-identity/v1/0','utf8')});
+  const recipient=new PrivateKey(hmac,'be',undefined,'error').toPublicKey().toString();hmac.fill(0);
+  const ephemeral=new ProtoWallet(PrivateKey.fromRandom());
+  const {ciphertext}=await ephemeral.encrypt({protocolID:[2,'crypton'],keyID:'1',counterparty:recipient,plaintext:Utils.toArray(JSON.stringify({protocol:'crypton-content',version:1,...content}),'utf8')});
+  return JSON.stringify({protocol:'crypton',version:2,ciphertext:Utils.toBase64(ciphertext),sender:(await ephemeral.getPublicKey({identityKey:true})).publicKey});
+}
+const server = http.createServer(async (request, response) => {
+  try {
+    if(request.method==='GET' && request.url==='/test/download/qa-message.crypton') {
+      const envelope=await forIOS({kind:'message',text:'Files picker round trip QA-20261030'});
+      response.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="qa-message.crypton"'});response.end(envelope);return;
+    }
+    if (request.method !== 'POST' || request.headers.origin !== 'https://crypton.ios') throw new Error('Invalid test request');
+    const chunks = [];
+    let size = 0;
+    for await (const block of request) {
+      size += block.length;
+      if (size > 1_000_000) throw new Error('Too large');
+      chunks.push(block);
+    }
+    const args = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const aliceKey = (await alice.getPublicKey({ identityKey: true })).publicKey;
+    const bobKey = (await bob.getPublicKey({ identityKey: true })).publicKey;
+    let result;
+    if (request.url === '/test/delivery-config') result = {host:'http://127.0.0.1:18777', agent:new PrivateKey(2).toPublicKey().toString()};
+    else if (request.url === '/test/qa-config') result = {heicReady:process.env.CRYPTON_QA_HEIC_READY==='1'};
+    else if (request.url === '/test/recipient') result = { publicKey: bobKey };
+    else if (request.url === '/test/v2-for-ios') {
+      let recipient = aliceKey;
+      if (args.mode !== 'root') {
+        const { hmac } = await alice.createHmac({protocolID:[2,'crypton'],keyID:'1',counterparty:'self',data:Utils.toArray('crypton/messaging-identity/v1/0','utf8')});
+        recipient = new PrivateKey(hmac,'be',undefined,'error').toPublicKey().toString(); hmac.fill(0);
+      }
+      const ephemeral = new ProtoWallet(PrivateKey.fromRandom());
+      const {ciphertext} = await ephemeral.encrypt({protocolID:[2,'crypton'],keyID:'1',counterparty:recipient,plaintext:Utils.toArray(JSON.stringify({protocol:'crypton-content',version:1,...args.content}),'utf8')});
+      result = {envelope:JSON.stringify({protocol:'crypton',version:2,ciphertext:Utils.toBase64(ciphertext),sender:(await ephemeral.getPublicKey({identityKey:true})).publicKey})};
+    } else if (request.url === '/test/v2-open' || request.url === '/test/v2-wrong') {
+      const e = JSON.parse(args.envelope);
+      const reader = request.url === '/test/v2-wrong' ? stranger : bob;
+      const {plaintext} = await reader.decrypt({protocolID:[2,'crypton'],keyID:'1',counterparty:e.sender,ciphertext:Utils.toArray(e.ciphertext,'base64')});
+      result = JSON.parse(Utils.toUTF8(plaintext));
+    }
+    else if (request.url === '/test/delivery-stats') result = {...deliveryFixture};
+    else if (request.url === '/test/lose-next-payment') { losePayment=true;result={ready:true}; }
+    else if (request.url === '/test/hold-next-payment') { holdPayment=true;result={ready:true}; }
+    else if (request.url === '/test/payment-failure') {
+      if(!['insufficient','denied',null].includes(args.kind))throw Error('Unknown disposable failure');
+      paymentFailure=args.kind;result={ready:true};
+    }
+    else if (request.url === '/test/offline-next') { offlineNext=true;result={ready:true}; }
+    else if (request.url === '/test/nested-for-ios') {
+      const inner=await forIOS({kind:'message',text:'Nested inner plaintext QA-20261030'});
+      result={inner,envelope:await forIOS({kind:'layer',envelope:inner,note:'Outer note QA-20261030'})};
+    }
+    else if (request.url === '/test/drop-next-delivery') { deliveryFixture.drop=true;result={ready:true}; }
+    else if (request.url === '/test/change-delivery-fee') { deliveryFixture.changedFee=Boolean(args.changed);result={ready:true}; }
+    else if (request.url === '/test/deny-next') { denyNext = true; result = { ready: true }; }
+    else if (request.url === '/test/redirect-next') { redirectNext = true; result = { ready: true }; }
+    else if (request.url === '/test/encrypt-for-ios') {
+      const { ciphertext } = await bob.encrypt({ ...protocol, counterparty: aliceKey, plaintext: Utils.toArray(args.plaintext, 'utf8') });
+      result = { ciphertext: Utils.toBase64(ciphertext), sender: bobKey };
+    } else if (request.url === '/test/decrypt-from-ios' || request.url === '/test/wrong-recipient') {
+      const reader = request.url === '/test/wrong-recipient' ? stranger : bob;
+      const { plaintext } = await reader.decrypt({ ...protocol, counterparty: aliceKey, ciphertext: Utils.toArray(args.ciphertext, 'base64') });
+      result = { plaintext: Utils.toUTF8(plaintext) };
+    } else {
+      if(offlineNext){offlineNext=false;request.socket.destroy();return;}
+      if (redirectNext) {
+        redirectNext = false;
+        response.writeHead(307, { Location: 'https://untrusted.example' });
+        response.end();
+        return;
+      }
+      if (denyNext) { denyNext = false; throw new Error('Fixture permission denied'); }
+      if (request.url === '/isAuthenticated' || request.url === '/waitForAuthentication') result = { authenticated: true };
+      else if (request.url === '/getPublicKey') result = await alice.getPublicKey(args);
+      else if (request.url === '/createAction') {
+        if(args.description!=='MessageBox delivery payment'||args.options.randomizeOutputs!==false)throw Error('Unexpected fixture payment');
+        deliveryFixture.paymentAttempts++;
+        if(paymentFailure){const failure=paymentFailure;paymentFailure=null;throw Error(failure==='insufficient'?'Insufficient disposable funds':'Disposable payment declined');}
+        deliveryFixture.payments++;
+        const tx=new Transaction();args.outputs.forEach(o=>tx.addOutput({satoshis:o.satoshis,lockingScript:Script.fromHex(o.lockingScript)}));
+        result={tx:tx.toAtomicBEEF(),txid:tx.id('hex')};
+        // Synthetic transactions are unsigned and never broadcast or confirmed.
+        actionHistory.push({txid:result.txid,status:'unsigned',labels:args.labels});
+        if(losePayment){losePayment=false;request.socket.destroy();return;}
+        if(holdPayment){holdPayment=false;request.once('close',()=>{});return;}
+      } else if(request.url==='/listActions') result={totalActions:actionHistory.filter(a=>(args.labels||[]).every(label=>a.labels.includes(label))).length,actions:actionHistory.filter(a=>(args.labels||[]).every(label=>a.labels.includes(label)))};
+      else if (['/encrypt','/decrypt','/createHmac','/verifyHmac','/createSignature','/verifySignature'].includes(request.url)) {
+        if(args.protocolID?.[1]==='crypton') {
+          if (![JSON.stringify(protocol.protocolID), JSON.stringify([2,'crypton'])].includes(JSON.stringify(args.protocolID)) || args.keyID !== protocol.keyID || args.seekPermission !== true) throw new Error('Incorrect Crypton protocol');
+        } else if(!['messagebox','auth message signature','server hmac'].includes(args.protocolID?.[1])) throw Error('Unsupported fixture protocol');
+        result = await alice[request.url.slice(1)](args);
+      } else throw new Error('Unsupported operation');
+    }
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(result, (_key, value) => value instanceof Uint8Array ? Array.from(value) : value));
+  } catch {
+    response.writeHead(400, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ isError: true, code: 1, message: 'Fixture request rejected' }));
+  }
+});
+server.listen(18776, '127.0.0.1', () => console.log('SDK fixture ready on 127.0.0.1:18776'));
+
+module.exports={alice,bob,stranger,deliveryFixture,load};
