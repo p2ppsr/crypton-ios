@@ -8,7 +8,7 @@ This change addresses the eight problems found during the 31 October 2026 live M
 - [BRC-116: Wallet Permissions and Counterparty Trust](https://github.com/bsv-blockchain/BRCs/blob/master/wallet/0116.md): manifest groups, per-scope selection, persistence, denial, revocation and separation of spending from protocol grants.
 - [BRC-100: Wallet Interface](https://github.com/bsv-blockchain/BRCs/blob/master/wallet/0100.md): the underlying wallet operations remain standard CWI calls.
 
-The native-app origin attribution and callback control are an ME implementation extension, not additional BRC-100 wallet methods. Web applications continue using their native frame hostname. Crypton never supplies an arbitrary originator in page JSON.
+The native-app attribution/pairing and callback control are an ME implementation extension, not additional BRC-100 wallet methods. Web applications continue using their native frame hostname. Crypton never supplies an arbitrary originator in page JSON.
 
 ## Changes
 
@@ -19,7 +19,7 @@ The native-app origin attribution and callback control are an ME implementation 
 | Authentication exceeded 120 seconds during approvals | The authentication exchange now shares the bounded 15-minute engine budget. Individual ME approvals retain a five-minute deadline and native HTTP requests retain their independent network/response-size limits. |
 | Payment approval canceled by app switching | No return is attempted while a CWI invocation is pending. ME independently refuses the callback while any native wallet prompt is active. A completed response is retried without re-invoking the wallet operation. |
 | Old quote expired during re-authentication | Before payment, retrieve a fresh authenticated quote, compare all fees and the pinned server identity, and checkpoint its native timestamp. Changed fees still require a fresh review; an unchanged old review can continue against a newly checked quote. |
-| Permissions reappeared after Allow | Bundle a reviewed group manifest in ME, establish a stable native identity from UIKit attribution, and hold individual permission waiters until persistent grants finish saving. A persistence failure rejects the waiting call. Existing canonical-token revocation and profile isolation remain enforced. |
+| Permissions reappeared after Allow | Bundle a reviewed group manifest in ME, establish a stable native identity from UIKit attribution or a signed app pairing key, and hold individual permission waiters until persistent grants finish saving. A persistence failure rejects the waiting call. Existing canonical-token revocation and profile isolation remain enforced. |
 | Canceled request stuck without useful recovery | Show a human-readable empty-history outcome. A typed ME refusal from a pre-commit permission check plus fresh empty history from the original wallet enables **Retry declined payment**. Generic errors, background cancellation, lost responses and empty history alone never enable another payment. |
 | Generic or misleading status | Show identity, authentication, fee, payment-review, submission and history-check phases. Recovery displays outcomes in plain language rather than raw JSON. |
 
@@ -27,7 +27,11 @@ The server issues each wallet command at most once. A refreshed or duplicate pag
 
 ## Group scope
 
-The capability page serves `Engine/manifest.json`. Updated ME uses a wallet-bundled copy of the reviewed declaration, scoped to `crypton.native`, only after UIKit identifies the source app as `com.projectbabbage.Crypton` and registers that exact localhost capability URL. Unattributed localhost pages retain their ordinary localhost identity. A website claiming `crypton.native` is rejected. Contexts are bounded and expire after 15 minutes.
+The capability page serves `Engine/manifest.json`. Updated ME uses a wallet-bundled copy of the reviewed declaration. [Apple restricts UIKit source-app attribution to apps on the same signing team](https://developer.apple.com/documentation/uikit/uiscene/connectionoptions/sourceapplication), which excludes ad-hoc simulator builds and independently signed apps.
+
+Crypton therefore signs its exact localhost capability URL, public pairing key and expiry with a persistent P-256 app key in the iOS Keychain. ME verifies the signature, binds it to that exact page, limits its lifetime to 15 minutes, and derives `crypton.native.<first-32-hash-characters>.<last-32-hash-characters>` (two DNS labels containing the full SHA-256 fingerprint) as the permission identity. A different key cannot reuse existing grants. The proof contains no private key or wallet data. This key authenticates the app pairing only; it does not encrypt messages or authorize spending.
+
+Key possession does not attest the app’s bundle identity. Crypton’s Settings and ME’s grouped review display the same short pairing code, which the user should compare before granting access. A newly generated key requires a new review. Same-team attributed older clients can use `crypton.native`; anonymous localhost pages keep their ordinary hostname identity. A website claiming either native identity is rejected. Contexts are bounded to 16 pages and expire after 15 minutes.
 
 The grouped declaration contains:
 
@@ -56,7 +60,7 @@ Use only the dedicated `Crypton-iOS-Test` simulator and disposable SDK/MessageBo
 
 ### Results on 31 October 2026
 
-- Crypton: 33 native/SDK integration tests passed. Seven wallet transport checks passed again after the final queue/replay changes.
+- Crypton: 33 native/SDK integration tests passed. Eight wallet transport/pairing checks and two WKWebView/SDK integration tests passed again after the final pairing and dual-response changes.
 - All 16 UI cases passed across the main run and the targeted recovery rerun. One assertion initially expected raw `unsigned` JSON; it was updated to assert the new visible “Wallet preparation pending” status, preserving its no-second-payment check.
 - ME: TypeScript checking, actual Swift attribution policy, real Toolbox grouped routing/selection with disposable persistence, permission settlement, canonical permission cache/revocation, byte bridge, discovery bridge and money-UX checks passed.
 - Crypton 2.4.1 (8) and ME 1.2.1 (208) simulator Release builds succeeded. Native integration was also built against the minimal checked-in iOS project wiring.
@@ -64,4 +68,16 @@ Use only the dedicated `Crypton-iOS-Test` simulator and disposable SDK/MessageBo
 
 A simulator update must retain the installed native bundle identity and its matching embedded Expo configuration; the official and Bob wallet builds have different authentication/app-group settings. Cached Bob artifacts must not be treated as evidence of the installed official wallet configuration. Permission migration between native identities is intentionally not automatic.
 
-The installed official ME smoke check reached its wallet welcome screen. Presence checks confirmed saved encrypted snapshots are retained; no snapshot, credential or key contents were exported or displayed. A production grouped grant, automatic return from that grant, and a new paid send remain unverified until the existing wallet is reopened and the user reviews the new scopes.
+The final Xcode-signed installed apps launch successfully. The saved encrypted snapshots are retained and the installed ME wallet retrieved Crypton’s receiving identity. No snapshot, credential or key contents were exported or displayed. A production grouped grant and a new paid send remain unverified until the user reviews the new scopes.
+
+### Installed-bridge follow-up
+
+ME sends wallet responses through both `postMessage` and injected message events. The bridge now claims a response UUID synchronously before saving it, so both channels cannot start competing save/recovery loops. Polling pauses until that save is acknowledged, preventing a one-time command from being fetched and lost while a previous response is still pending. Explicit manual return can retry an exhausted return request.
+
+The return control now passes a nonempty ID through ME’s actual message sender; without it, that sender discarded the acknowledgement. Eleven native discovery/return-handler regression cases pass, including acknowledgement when a native prompt blocks return. The shipped page also passes a deterministic dual-channel/slow-acknowledgement regression. Two WKWebView/SDK integration tests pass with duplicate responses emitted as installed ME emits them, covering identity/crypto/denial and paid-delivery recovery with no second payment.
+
+### Installed simulator evidence
+
+The installed official ME now presents all six selectable Crypton scopes together and displays the same pairing code as Crypton Settings. The preceding denied request returned automatically to Crypton. The group remains unapproved: persistent on-chain permission storage, revocation in the live profile, and another paid production message are not claimed as verified. The final review uses a readable **Allow selected** button and displays the complete permission-storage cost disclosure.
+
+The full fingerprint is split into two DNS labels because Toolbox enforces the 63-character per-label limit. The real manager’s originator validator and grouped-permission routing/selection now test that exact native identity format. Unsigned websites cannot use it.

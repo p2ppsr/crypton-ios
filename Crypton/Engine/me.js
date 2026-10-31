@@ -1,6 +1,6 @@
 'use strict';
 const statusText = document.getElementById('status'), returnLink = document.getElementById('return');
-const sent = new Set();
+const sent = new Set(), received = new Set();
 const allowed = new Set(['isAuthenticated','waitForAuthentication','getPublicKey','getNetwork','encrypt','decrypt','createHmac','verifyHmac','createSignature','verifySignature','createAction','listActions','discoverByAttributes','discoverByIdentityKey']);
 let current = null, stopped = false, returning = false, returnTimer, returnAttempts = 0;
 function returnToApp() {
@@ -11,7 +11,7 @@ function returnToApp() {
   window.ReactNativeWebView?.postMessage(JSON.stringify({type:'CRYPTON_RETURN',callback:returnLink.href}));
   returnTimer = setTimeout(()=>{ location.href=returnLink.href; },1500);
 }
-returnLink.addEventListener('click', event => { if (current) { event.preventDefault(); return; } event.preventDefault(); returnToApp(); });
+returnLink.addEventListener('click', event => { event.preventDefault(); if (current) return; returning=false; returnAttempts=0; returnToApp(); });
 async function boundedFetch(path, options = {}) {
   const controller = new AbortController(), timer = setTimeout(()=>controller.abort(),4000);
   try { return await fetch(path,{...options,signal:controller.signal}); } finally { clearTimeout(timer); }
@@ -26,6 +26,10 @@ window.addEventListener('message', async event => {
     return;
   }
   if (!response || response.type !== 'CWI' || response.isInvocation !== false || response.id !== current) return;
+  // ME posts AND injects each response. Claim it before the first await so the
+  // second channel cannot start a second save/recovery loop for the same UUID.
+  if (received.has(response.id)) return;
+  received.add(response.id);
   // The wallet has finished. If iOS suspended Crypton during a long approval,
   // foreground it and retry this SAME result, never re-invoke the wallet method.
   const requestID = current;
@@ -53,6 +57,9 @@ const labels = {
 };
 async function poll() {
   if (stopped) return;
+  // A command is issued once by the native server. Do not fetch the next one
+  // until the current result is acknowledged, or it could be consumed and lost.
+  if (current) { setTimeout(poll,150); return; }
   try {
     const response = await boundedFetch('next',{cache:'no-store'});
     if (!response.ok) throw Error();

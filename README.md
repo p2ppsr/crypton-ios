@@ -6,7 +6,7 @@ Native iOS port of [Crypton for Android](https://github.com/p2ppsr/crypton-andro
 
 The branch includes the SwiftUI application, native ME handoff, Android-compatible v2 engine, MessageBox inbox/outbox, optional disappearing messages, share extension, contacts and media import/export, and simulator tests. The original artwork and audio are retained.
 
-**2.4.1 wallet-flow update:** one ME page per operation, guarded automatic return, selectable BRC-116 permissions, persistent-grant ordering, fresh quote revalidation, and safe declined-payment recovery. Automatic grouped native identity requires the companion ME update. See [wallet usability and verification](docs/WALLET_USABILITY_2_4_1.md).
+**2.4.1 wallet-flow update:** one ME page per operation, guarded automatic return, selectable BRC-116 permissions, persistent-grant ordering, fresh quote revalidation, and safe declined-payment recovery. Grouped native identity requires the [companion ME update](https://github.com/p2ppsr/metanet-explorer-mobile/tree/codex/crypton-wallet-usability). Compare the app pairing code in Crypton Settings with ME’s permission review. See [wallet usability and verification](docs/WALLET_USABILITY_2_4_1.md).
 
 ![Crypton home screen](docs/screenshots/home.png)
 

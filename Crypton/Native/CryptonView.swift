@@ -256,7 +256,13 @@ struct CryptonView: View {
             if model.walletMode == "json" {
                 textField("https://wallet.example",$model.endpoint)
                 Text("Use an unlocked BRC-100 wallet with a JSON API. Requests identify this app as https://crypton.ios.").font(.footnote).foregroundStyle(.secondary)
-            } else if ["me","me-bob"].contains(model.walletMode) { Text(model.walletMode == "me-bob" ? "Uses the separate iOS ME Bob app. Sign in there independently; the official wallet remains installed." : "Keep ME open for grouped permission and payment review. Crypton returns automatically when the operation finishes with a compatible ME build.").font(.footnote).foregroundStyle(.secondary) } else { Text(PortalWallet.origin).font(.footnote).textSelection(.enabled) }
+            } else if ["me","me-bob"].contains(model.walletMode) {
+                Text(model.walletMode == "me-bob" ? "Uses the separate iOS ME Bob app. Sign in there independently; the official wallet remains installed." : "Keep ME open for grouped permission and payment review. Crypton returns automatically when the operation finishes with a compatible ME build.").font(.footnote).foregroundStyle(.secondary)
+                if let me = model.wallet as? MEWallet {
+                    Text("Wallet pairing code: " + me.pairingCode).font(.footnote.monospaced()).textSelection(.enabled)
+                    Text("Compare this code with Crypton’s grouped permission review in ME before allowing access.").font(.footnote).foregroundStyle(.secondary)
+                }
+            } else { Text(PortalWallet.origin).font(.footnote).textSelection(.enabled) }
             action("Save wallet connection","checkmark",primary:true) { model.saveWallet() }
             Toggle("Legacy iPhone message format",isOn:$model.legacy).tint(mint)
             Text(model.legacy ? "Raw base64 · wallet identity · explicit sender selection" : "Crypton v2 · app-only receiving identity · sender included").font(.footnote).foregroundStyle(.secondary)
@@ -272,7 +278,7 @@ struct CryptonView: View {
             action("Import next shared message","square.and.arrow.down") { model.importPendingShare() }
             action("How Crypton works","questionmark.circle") { model.screen = .guide }
             Button("Clear wallet session",role:.destructive) { clearConfirm = true }.padding(.vertical,12)
-            Text("Drafts, decrypted messages and app-only private material stay in memory. Clearing this session does not sign out an external BRC-100 wallet.").font(.footnote).foregroundStyle(.secondary)
+            Text("Drafts and decrypted messages stay in memory. The app pairing key stays in the iOS Keychain across sessions. Clearing this session does not sign out your external wallet.").font(.footnote).foregroundStyle(.secondary)
             Text("Music: Phantom from Space — Kevin MacLeod (incompetech.com), CC BY 4.0.").font(.caption).foregroundStyle(.secondary)
             back()
         }

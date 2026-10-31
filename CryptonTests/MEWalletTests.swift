@@ -1,8 +1,27 @@
 import XCTest
 import WebKit
+import CryptoKit
 @testable import Crypton
 
 final class MEWalletTests: XCTestCase {
+    func testNativePairingSignsExactCapabilityWithAnInstallationKey() throws {
+        let target = URL(string:"http://localhost:12345/" + String(repeating:"a",count:43) + "/")!
+        let rawKey = Data(repeating:1,count:32)
+        let fields = try NativeWalletPairing.proof(target,privateKey:rawKey,expires:Date(timeIntervalSince1970:2_000_000_000))
+        let values = Dictionary(uniqueKeysWithValues:fields.map { ($0.name,$0.value!) })
+        XCTAssertEqual(Set(values.keys),Set(["cryptonKey","cryptonExpires","cryptonSignature"]))
+        XCTAssertEqual(values["cryptonExpires"],"2000000000")
+        func decode(_ value:String) -> Data {
+            let text = value.replacingOccurrences(of:"-",with:"+").replacingOccurrences(of:"_",with:"/")
+            return Data(base64Encoded:text + String(repeating:"=",count:(4-text.count%4)%4))!
+        }
+        let publicKey = try P256.Signing.PublicKey(x963Representation:decode(values["cryptonKey"]!))
+        let signature = try P256.Signing.ECDSASignature(derRepresentation:decode(values["cryptonSignature"]!))
+        let message = "crypton-pairing/v1\n\(target.absoluteString)\n2000000000\n\(values["cryptonKey"]!)"
+        XCTAssertTrue(publicKey.isValidSignature(signature,for:Data(message.utf8)))
+        XCTAssertFalse(publicKey.isValidSignature(signature,for:Data(message.replacingOccurrences(of:"12345",with:"12346").utf8)))
+        XCTAssertEqual(publicKey.x963Representation,try P256.Signing.PrivateKey(rawRepresentation:rawKey).publicKey.x963Representation)
+    }
     @MainActor func testOperationSessionQueuesCallsWithoutReturningOrReopeningME() async throws {
         let opened = expectation(description:"ME opened once"), second = expectation(description:"Second method queued")
         var launches = 0
@@ -163,7 +182,7 @@ final class MEWalletTests: XCTestCase {
                 let result = try await JSONWallet(endpoint:URL(string:"http://127.0.0.1:18776")!).call(method,args,raw:true)
                 response["status"] = "success"; response["result"] = result
             } catch { response["status"] = "error"; response["description"] = "Disposable fixture declined request"; response["code"] = 1 }
-            do { _ = try await web.evaluateJavaScript("window.postMessage(\(try jsonString(try jsonString(response))),'*');void 0") }
+            do { _ = try await web.evaluateJavaScript("window.postMessage(\(try jsonString(try jsonString(response))),'*');window.dispatchEvent(new MessageEvent('message',{data:\(try jsonString(try jsonString(response)))}));void 0") }
             catch { wallet.cancel() }
         }
     }

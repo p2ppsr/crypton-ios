@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import Security
+import CryptoKit
 
 /// iOS ME's documented browser deep link and ReactNativeWebView CWI transport.
 /// Each operation has a fresh loopback capability and each call a fresh UUID. Wallet results never travel in URL schemes.
@@ -33,12 +34,13 @@ import Security
          backgroundTime: Bool = true, scheme:String = "metanet") {
         self.open = open; self.foreground = foreground; self.backgroundTime = backgroundTime; self.scheme = scheme
     }
-    static func handoffURL(_ target:URL,scheme:String = "metanet") throws -> URL {
+    static func handoffURL(_ target:URL,scheme:String = "metanet",pairing:[URLQueryItem] = []) throws -> URL {
         guard ["metanet","metanet-bob"].contains(scheme) else { throw CryptonError("Unsupported ME wallet application.") }
         var c = URLComponents(); c.scheme = scheme; c.host = "browser"
-        c.queryItems = [URLQueryItem(name:"url",value:target.absoluteString),URLQueryItem(name:"target",value:"current")]
+        c.queryItems = [URLQueryItem(name:"url",value:target.absoluteString),URLQueryItem(name:"target",value:"current")] + pairing
         guard let url = c.url else { throw CryptonError("Could not open Metanet Explorer.") }; return url
     }
+    var pairingCode:String { (try? NativeWalletPairing.code()) ?? "Unavailable" }
     /// Keep one capability page alive across the validated engine operation.
     func beginOperation() { if sessionFinished { closeSession() }; session = true; sessionFinished = false; closeTimer?.cancel() }
     func endOperation() {
@@ -94,7 +96,8 @@ import Security
         id = UUID().uuidString; self.method = method; self.raw = raw; response = nil
         command = ["type":"CWI","isInvocation":true,"id":id,"call":method,"args":params]; issued = false
         let run = generation
-        let link = try Self.handoffURL(URL(string:origin + "/" + token + "/")!,scheme:scheme)
+        let target = URL(string:origin + "/" + token + "/")!
+        let link = try Self.handoffURL(target,scheme:scheme,pairing:NativeWalletPairing.proof(target))
         progress?(method == "createAction" ? "Review the total and approve payment in ME" : "ME: " + Self.label(method))
         return try await withCheckedThrowingContinuation { done in
             continuation = done; waiting?(true)
@@ -199,5 +202,40 @@ import Security
             default: return LoopbackResponse(status:403)
             }
         } catch { return LoopbackResponse(status:400) }
+    }
+}
+
+/// This key identifies a Crypton installation to ME; it never encrypts messages
+/// or authorizes spending. The wallet's grouped review displays its fingerprint.
+enum NativeWalletPairing {
+    private static func key() throws -> P256.Signing.PrivateKey {
+        let query:[String:Any] = [kSecClass as String:kSecClassGenericPassword,
+            kSecAttrService as String:"com.projectbabbage.Crypton.walletPairing",
+            kSecAttrAccount as String:"native-signing-v1"]
+        var read = query; read[kSecReturnData as String] = true; read[kSecMatchLimit as String] = kSecMatchLimitOne
+        var value:CFTypeRef?; let status = SecItemCopyMatching(read as CFDictionary,&value)
+        if status == errSecSuccess, let data = value as? Data { return try P256.Signing.PrivateKey(rawRepresentation:data) }
+        guard status == errSecItemNotFound else { throw CryptonError("Unlock this device to use the wallet pairing key.") }
+        let created = P256.Signing.PrivateKey(); var save = query
+        save[kSecValueData as String] = created.rawRepresentation
+        save[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        guard SecItemAdd(save as CFDictionary,nil) == errSecSuccess else { throw CryptonError("Could not save the wallet pairing key.") }
+        return created
+    }
+    private static func encoded(_ data:Data) -> String {
+        data.base64EncodedString().replacingOccurrences(of:"+",with:"-").replacingOccurrences(of:"/",with:"_").replacingOccurrences(of:"=",with:"")
+    }
+    static func code() throws -> String {
+        let digest = SHA256.hash(data:try key().publicKey.x963Representation).map { String(format:"%02x",$0) }.joined()
+        return stride(from:0,to:12,by:4).map { String(digest.dropFirst($0).prefix(4)) }.joined(separator:" ")
+    }
+    static func proof(_ target:URL,privateKey:Data? = nil,expires:Date = Date().addingTimeInterval(900)) throws -> [URLQueryItem] {
+        let signingKey = try privateKey.map { try P256.Signing.PrivateKey(rawRepresentation:$0) } ?? key()
+        let publicKey = encoded(signingKey.publicKey.x963Representation)
+        let deadline = String(Int64(expires.timeIntervalSince1970))
+        let message = Data("crypton-pairing/v1\n\(target.absoluteString)\n\(deadline)\n\(publicKey)".utf8)
+        return [URLQueryItem(name:"cryptonKey",value:publicKey),
+                URLQueryItem(name:"cryptonExpires",value:deadline),
+                URLQueryItem(name:"cryptonSignature",value:encoded(try signingKey.signature(for:message).derRepresentation))]
     }
 }
