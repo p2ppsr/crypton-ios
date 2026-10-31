@@ -1,0 +1,19 @@
+{
+  "name": "Crypton",
+  "short_name": "Crypton",
+  "start_url": ".",
+  "display": "standalone",
+  "metanet": {
+    "groupPermissions": {
+      "description": "Connect Crypton for encrypted messages and MessageBox delivery. Payments are reviewed separately.",
+      "protocolPermissions": [
+        { "protocolID": [1, "identity key retrieval"], "description": "Identify the selected wallet profile" },
+        { "protocolID": [2, "server hmac"], "counterparty": "self", "description": "Authenticate using your own wallet, without disclosing its keys" },
+        { "protocolID": [2, "crypton"], "counterparty": "self", "description": "Derive your Crypton receiving identity in your own wallet" },
+        { "protocolID": [1, "messagebox"], "description": "Encrypt, decrypt and identify MessageBox messages" },
+        { "protocolID": [2, "auth message signature"], "counterparty": "028155878063d691f01cfc0eeb626404ebe9303ec50f9542c234c5c85100a98ca1", "description": "Authenticate to the MessageBox server" },
+        { "protocolID": [2, "3241645161d8"], "counterparty": "028155878063d691f01cfc0eeb626404ebe9303ec50f9542c234c5c85100a98ca1", "description": "Derive the reviewed MessageBox payment destination" }
+      ]
+    }
+  }
+}

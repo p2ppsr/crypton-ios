@@ -38,7 +38,7 @@ struct CryptonView: View {
                 }.scrollDismissesKeyboard(.interactively)
             }.disabled(model.busy)
             if model.busy {
-                VStack(spacing:18) { ProgressView().tint(mint); Text("Waiting for your wallet…"); Button("Cancel request") { model.cancel() }.tint(mint) }
+                VStack(spacing:18) { ProgressView().tint(mint); Text(model.activity); Button("Cancel request") { model.cancel() }.tint(mint) }
                     .padding(28).background(panel,in:RoundedRectangle(cornerRadius:18)).shadow(radius:30)
             }
             if (model.disappearSend || model.disappearReceive || model.privateInboxView) && (!model.foreground || model.captureActive) {
@@ -256,7 +256,7 @@ struct CryptonView: View {
             if model.walletMode == "json" {
                 textField("https://wallet.example",$model.endpoint)
                 Text("Use an unlocked BRC-100 wallet with a JSON API. Requests identify this app as https://crypton.ios.").font(.footnote).foregroundStyle(.secondary)
-            } else if ["me","me-bob"].contains(model.walletMode) { Text(model.walletMode == "me-bob" ? "Uses the separate iOS ME Bob app. Sign in there independently; the official wallet remains installed." : "Approve each request in Metanet Explorer, then return to Crypton.").font(.footnote).foregroundStyle(.secondary) } else { Text(PortalWallet.origin).font(.footnote).textSelection(.enabled) }
+            } else if ["me","me-bob"].contains(model.walletMode) { Text(model.walletMode == "me-bob" ? "Uses the separate iOS ME Bob app. Sign in there independently; the official wallet remains installed." : "Keep ME open for grouped permission and payment review. Crypton returns automatically when the operation finishes with a compatible ME build.").font(.footnote).foregroundStyle(.secondary) } else { Text(PortalWallet.origin).font(.footnote).textSelection(.enabled) }
             action("Save wallet connection","checkmark",primary:true) { model.saveWallet() }
             Toggle("Legacy iPhone message format",isOn:$model.legacy).tint(mint)
             Text(model.legacy ? "Raw base64 · wallet identity · explicit sender selection" : "Crypton v2 · app-only receiving identity · sender included").font(.footnote).foregroundStyle(.secondary)
@@ -330,7 +330,22 @@ struct CryptonView: View {
             } else if state == "PAYMENT_REQUESTED" {
                 Text("The payment outcome is uncertain. Check the wallet history. A second payment is blocked.").foregroundStyle(.orange)
                 action("Check wallet history","clock") { model.deliver("recover") }
-                if let history = r["walletHistory"] { selectable((try? jsonString(history)) ?? "") }
+                if let history = r["walletHistory"] as? JSON {
+                    if integer(history["totalActions"]) == 0 {
+                        Text("No matching transaction was found in the original wallet. An empty history alone cannot prove an interrupted payment failed.").font(.footnote)
+                        if let refusal = r["walletRefusal"] as? JSON, refusal["notCommitted"] as? Bool == true {
+                            Text("ME confirmed that permission was denied before payment committed. You can prepare a fresh quote.").font(.footnote)
+                            action("Retry declined payment","arrow.clockwise") { model.deliver("retryRefused") }
+                        } else {
+                            Text("Keep this recovery record and check again. No additional payment will be requested for this uncertain attempt.").font(.footnote)
+                        }
+                    } else {
+                        Text("Found \(integer(history["totalActions"]) ?? 0) matching wallet transaction(s). Recovery uses the existing payment.").font(.footnote)
+                        if let transactions = history["transactions"] as? [JSON] {
+                            Text(transactions.map { DeliveryStore.paymentStatus($0["status"] as? String ?? "unknown") }.joined(separator:"\n")).font(.footnote)
+                        }
+                    }
+                }
             } else { action("Retry delivery with saved payment","arrow.clockwise",primary:true) { model.deliver("resume") } }
             if let payment = r["payment"] as? JSON { Text("Payment transaction").font(.caption); selectable(payment["txid"] as? String ?? "") }
             if let error = r["error"] as? String { Text(error).foregroundStyle(.orange) }

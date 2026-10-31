@@ -15,6 +15,7 @@ import WebKit
     private var discoveryRequested = false
     private var timer: Task<Void,Never>?
     private var http: BoundedHTTP?
+    var progress: ((String) -> Void)?
     private var root: URL?
     init(wallet: WalletConnection, store: DeliveryStore, inbox:InboxStore? = nil) {
         self.wallet = wallet; self.store = store; inboxStore = inbox ?? InboxStore(delivery:store)
@@ -63,6 +64,7 @@ import WebKit
         let id = UUID().uuidString; operation = id
         var request = request; request["id"] = id
         return try await withCheckedThrowingContinuation { continuation in
+            (wallet as? MEWallet)?.beginOperation()
             pending = continuation; queued = (function, request)
             timer = Task { [weak self] in
                 do { try await Task.sleep(nanoseconds:900_000_000_000) } catch { return }
@@ -77,6 +79,7 @@ import WebKit
         catch { finish(.failure(error)) }
     }
     private func finish(_ result: Result<Any,Error>) {
+        (wallet as? MEWallet)?.endOperation()
         let done = pending; pending = nil; operation = nil; queued = nil; discovery = nil; inboxSession = nil; timer?.cancel(); timer = nil
         done?.resume(with:result)
     }
@@ -127,7 +130,11 @@ import WebKit
                     NSLog("Crypton delivery wallet: %@",method)
                     #endif
                     try store.beforeWallet(session.id,action:session.action,method:method,args:args)
-                    value = try await wallet.call(method,args,raw:true)
+                    do { value = try await wallet.call(method,args,raw:true) }
+                    catch {
+                        if method == "createAction", let refusal = error as? WalletRefusal, refusal.notCommitted { try store.walletRefused(session.id,refusal:refusal) }
+                        throw error
+                    }
                     // Save the returned transaction even if the user cancelled while the wallet was approving it.
                     if method == "createAction" { guard let result = value as? JSON else { throw CryptonError("Invalid wallet transaction.") }; try store.walletReturned(session.id,result:result) }
                 case "checkpoint":
@@ -137,6 +144,9 @@ import WebKit
                     else { throw CryptonError("Missing checkpoint authorization.") }; value = true
                 case "http":
                     guard let request = data["request"] as? JSON else { throw CryptonError("Missing HTTP request.") }
+                    if let address = request["url"] as? String, let url = URL(string:address) {
+                        progress?(url.path == "/sendMessage" ? "Sending encrypted message with saved payment…" : url.path == "/permissions/quote" ? "Checking MessageBox delivery fee…" : "Authenticating with MessageBox…")
+                    }
                     value = try await fetch(request)
                 case "paymentProof":
                     guard let session = delivery, session.action == "recover" else { throw CryptonError("Payment proof recovery is unavailable.") }

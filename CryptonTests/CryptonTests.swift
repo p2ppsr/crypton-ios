@@ -109,6 +109,42 @@ final class CryptonTests: XCTestCase {
         XCTAssertThrowsError(try Wire.endpoint("http://127.0.0.1:3321"))
         XCTAssertNoThrow(try Wire.endpoint("http://127.0.0.1:3321",debugLoopback:true))
     }
+    @MainActor func testFreshQuoteRevalidationAndDefiniteRefusalRecovery() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let store = DeliveryStore(directory:directory)
+        func draft() throws -> (String,JSON,JSON) {
+            let id = try store.create(envelope:envelope(),key:key,recipient:key,name:"Fixture")
+            let action:JSON = ["description":"MessageBox delivery payment","outputs":[["satoshis":1,"lockingScript":"76a914"+String(repeating:"0",count:40)+"88ac","outputDescription":"MessageBox server delivery fee","customInstructions":try jsonString(["recipientIdentityKey":DeliveryStore.agent,"derivationPrefix":"a","derivationSuffix":"b"])]],"options":["randomizeOutputs":false,"acceptDelayedBroadcast":false],"labels":["crypton-delivery-"+id]]
+            let quote:JSON = ["deliveryFee":1,"recipientFee":0,"deliveryAgentIdentityKey":DeliveryStore.agent]
+            try store.checkpoint(id,action:"prepare",kind:"prepared",value:["sender":key,"recipient":key,"quote":quote,"messageId":String(repeating:"a",count:64),"body":"{\"encryptedMessage\":\"AAAA\"}","action":action,"remittances":[]])
+            return (id,action,quote)
+        }
+        let (id,action,quote) = try draft()
+        // Simulate an old reviewed quote; a fresh identical authenticated quote
+        // renews freshness without changing the reviewed action or recipients.
+        var old = try store.get(id), prepared = old["prepared"] as! JSON
+        prepared["quotedAt"] = 0; old["prepared"] = prepared
+        try jsonData(old).write(to:directory.appendingPathComponent(id+".json"))
+        XCTAssertThrowsError(try store.beforeWallet(id,action:"send",method:"createAction",args:action))
+        var changed = quote; changed["deliveryFee"] = 2
+        XCTAssertThrowsError(try store.checkpoint(id,action:"send",kind:"quoteRevalidated",value:["quote":changed]))
+        try store.checkpoint(id,action:"send",kind:"quoteRevalidated",value:["quote":quote])
+        try store.beforeWallet(id,action:"send",method:"createAction",args:action)
+        try store.checkpoint(id,action:"recover",kind:"history",value:["sender":key,"totalActions":0,"transactions":[]])
+        XCTAssertThrowsError(try store.retryRefusedPayment(id),"Empty history alone must not authorize repayment")
+        try store.walletRefused(id,refusal:WalletRefusal(method:"createAction",code:1,detail:"Permission denied before signing",notCommitted:true))
+        let reopened = DeliveryStore(directory:directory)
+        try reopened.retryRefusedPayment(id)
+        XCTAssertEqual(try reopened.get(id)["state"] as? String,"DRAFT")
+        XCTAssertNil(try reopened.get(id)["prepared"])
+        XCTAssertNotNil(try reopened.get(id)["previousRefusal"])
+        let (uncertain,args,_) = try draft()
+        try store.beforeWallet(uncertain,action:"send",method:"createAction",args:args)
+        XCTAssertThrowsError(try store.walletRefused(uncertain,refusal:WalletRefusal(method:"createAction",code:1,detail:"Timeout",notCommitted:false)))
+        XCTAssertThrowsError(try store.checkpoint(uncertain,action:"recover",kind:"history",value:["sender":DeliveryStore.agent,"totalActions":0,"transactions":[]]))
+        XCTAssertThrowsError(try store.begin(uncertain,action:"send"))
+    }
     @MainActor func testOutboxWriteAheadBlocksSecondPayment() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at:directory) }
@@ -129,7 +165,7 @@ final class CryptonTests: XCTestCase {
         XCTAssertThrowsError(try reopened.beforeHTTP(id,action:"send",url:URL(string:"https://evil.example/sendMessage")!,method:"POST",body:"{}"))
         XCTAssertThrowsError(try reopened.recoveryTransaction(id))
         let txid = String(repeating:"b",count:64)
-        let history:JSON = ["totalActions":1,"transactions":[["txid":txid,"status":"completed"]]]
+        let history:JSON = ["sender":key,"totalActions":1,"transactions":[["txid":txid,"status":"completed"]]]
         try reopened.checkpoint(id,action:"recover",kind:"history",value:history)
         XCTAssertEqual(try reopened.recoveryTransaction(id),txid)
         // Native journal guards identity/state; the engine separately validates BEEF and outputs.

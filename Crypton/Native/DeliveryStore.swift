@@ -128,6 +128,24 @@ import Foundation
         var r = try get(id); try require(r,"PAYMENT_REQUESTED")
         r["walletResult"] = result; r["state"] = "PAYMENT_RETURNED"; try write(r)
     }
+    func walletRefused(_ id:String,refusal:WalletRefusal) throws {
+        var r = try get(id); try require(r,"PAYMENT_REQUESTED")
+        guard refusal.method == "createAction", refusal.notCommitted, r["walletResult"] == nil, r["payment"] == nil else { throw CryptonError("Payment outcome still needs checking.") }
+        r["walletRefusal"] = ["notCommitted":true,"code":refusal.code,"detail":refusal.detail]
+        try write(r)
+    }
+    func retryRefusedPayment(_ id:String) throws {
+        var r = try get(id); try require(r,"PAYMENT_REQUESTED")
+        guard let refusal = r["walletRefusal"] as? JSON, refusal["notCommitted"] as? Bool == true,
+              let history = r["walletHistory"] as? JSON, integer(history["totalActions"]) == 0,
+              let transactions = history["transactions"] as? [JSON], transactions.isEmpty,
+              let p = r["prepared"] as? JSON, history["sender"] as? String == p["sender"] as? String,
+              let checked = history["checkedAt"] as? Double, Date().timeIntervalSince1970 * 1000 - checked < 300_000,
+              r["walletResult"] == nil, r["payment"] == nil else { throw CryptonError("Retry needs a definite wallet refusal and a fresh empty history from the same wallet. Interrupted payments stay protected.") }
+        r["previousRefusal"] = r["walletRefusal"]; r["state"] = "DRAFT"
+        for key in ["prepared","walletRefusal","walletHistory","paymentRequestedAt","error"] { r.removeValue(forKey:key) }
+        try write(r)
+    }
     func recoveryTransaction(_ id:String) throws -> String {
         let r = try get(id); try require(r,"PAYMENT_REQUESTED")
         guard let history = r["walletHistory"] as? JSON, integer(history["totalActions"]) == 1,
@@ -149,6 +167,11 @@ import Foundation
             guard let payment = value["action"] as? JSON else { throw CryptonError("Missing payment plan.") }; try validateAction(value,payment,id)
             var prepared = value; prepared["quotedAt"] = Date().timeIntervalSince1970 * 1000
             r["prepared"] = prepared; r["state"] = "QUOTED"; r.removeValue(forKey:"error")
+        case "quoteRevalidated":
+            try require(r,"QUOTED")
+            guard action == "send", var p = r["prepared"] as? JSON, let q = value["quote"] as? JSON,
+                  sameJSON(q,p["quote"]) else { throw CryptonError("MessageBox fees changed. Refresh and review the new quote.") }
+            _ = try feeTotal(q); p["quotedAt"] = Date().timeIntervalSince1970 * 1000; r["prepared"] = p
         case "paid":
             try require(r,"PAYMENT_RETURNED")
             guard let txid = value["txid"] as? String, txid.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil,
@@ -165,7 +188,11 @@ import Foundation
                 try cleanup(id); return
             }
             r["receipt"] = value; r["state"] = "SENT"; r["acceptedAt"] = Date().timeIntervalSince1970 * 1000; r.removeValue(forKey:"error")
-        case "history": try require(r,"PAYMENT_REQUESTED"); r["walletHistory"] = value
+        case "history":
+            try require(r,"PAYMENT_REQUESTED")
+            guard action == "recover", let p = r["prepared"] as? JSON, value["sender"] as? String == p["sender"] as? String,
+                  let count = integer(value["totalActions"]), count >= 0, let transactions = value["transactions"] as? [JSON], transactions.count == min(count,10) else { throw CryptonError("Invalid payment history or changed wallet profile.") }
+            var history = value; history["checkedAt"] = Date().timeIntervalSince1970 * 1000; r["walletHistory"] = history
         case "recoveredPayment":
             try require(r,"PAYMENT_REQUESTED")
             guard action == "recover", let history = r["walletHistory"] as? JSON,
@@ -195,6 +222,16 @@ import Foundation
     func saveError(_ id: String, _ error: Error) throws {
         var r = try get(id); if r["state"] as? String == "SENT" { return }
         r["error"] = String(error.localizedDescription.prefix(400)); try write(r)
+    }
+    static func paymentStatus(_ status:String) -> String {
+        switch status {
+        case "unsigned": return "Wallet preparation pending"
+        case "completed": return "Payment completed"
+        case "unproven": return "Payment broadcast; confirmation pending"
+        case "nosend": return "Payment prepared; not broadcast"
+        case "failed": return "Wallet reports payment failed; recovery record retained"
+        default: return "Wallet status: " + String(status.prefix(60))
+        }
     }
     static func discarded(_ r:JSON) -> Bool { r["disappear"] as? Bool == true && r["state"] as? String == "SENT" }
     func cleanup(_ id:String) throws {

@@ -4,23 +4,23 @@ New installations select Metanet Explorer and Crypton v2. Settings preserves the
 
 ## Request lifecycle
 
-1. Crypton validates the wallet operation. For MessageBox, the native outbox validates the reviewed fee and records `PAYMENT_REQUESTED` before the wallet can receive `createAction`.
-2. A listener binds only to `127.0.0.1` on an ephemeral port. A new 256-bit capability and request UUID are generated. A short iOS background task permits the handoff while Crypton is behind ME.
-3. Crypton opens `metanet://browser?url=<encoded loopback page>`. The page polls its capability-scoped `next` route and forwards the command through `window.ReactNativeWebView.postMessage` using the official CWI invocation shape.
-4. The page accepts only a matching response UUID and posts it to the exact local Origin. Native code checks Host, capability, method, content type, Origin, UUID and the strict Boolean `isInvocation: false` before accepting it. Duplicate and stale replies are rejected.
-5. **Return to Crypton** carries only the capability. Some installed ME builds restrict external custom schemes; switching back with the iOS app switcher is also supported and completes the same already-received response. The result remains in memory. Foreground return completes the request, invalidates the capability and closes the listener. A second wallet request starts from Crypton's foreground rather than attempting to launch another app from background execution.
+Crypton 2.4.1 keeps one local capability page open for each crypto, search, inbox or outbox operation. Individual wallet calls have fresh UUIDs and are validated natively before entering the queue. The page fetches each command at most once; a duplicate page or refresh cannot repeat a payment invocation. Wallet results never travel in URL schemes.
 
-The bridge permits only the public-identity/authentication, read-only certificate discovery, Crypton encryption/HMAC and native-authorized MessageBox subset. It cannot access arbitrary wallet methods. The page loads only the packaged script, disallows framing/remote code and direct cross-origin networking, and sends no wallet result in a deep link. HTTP parsing rejects duplicate headers, transfer encodings, oversized headers/bodies and extra pipelined data. Connections and idle time are bounded.
+The server binds only to `127.0.0.1` on an ephemeral port and checks Host, Origin, content type, capability and UUID. The HTML loads only packaged scripts; framing and remote script execution are disallowed. The strict parser bounds HTTP connections, headers and bodies and rejects ambiguous requests.
+
+Updated ME establishes Crypton's native app identity using UIKit's `sourceApplication` attribution and the exact registered loopback page. Its reviewed manifest declares six selectable protocol scopes under BRC-116; payments retain a separate review. Page-supplied originator claims cannot establish this identity. The native callback control accepts only the registered return capability and cannot leave an active wallet prompt.
+
+An ordinary ME operation no longer needs a manual return after each call. On completion, the page requests the exact callback. During a long approval, iOS may suspend Crypton; after ME finishes, the page foregrounds Crypton and retries saving that same response. It does not invoke the wallet again. Older ME builds retain the manual app-switcher fallback.
 
 ## Cancellation and iOS limits
 
-A background task is finite. If iOS ends the available background time, Crypton ends the background task but preserves the pending request, capability and any received response for foreground return. Each wallet request has a five-minute deadline; the enclosing crypto/delivery operation has a fifteen-minute deadline. Explicit cancellation or wallet deadline expiry invalidates the capability. The wallet may already have performed a requested payment, so an expired or cancelled paid request remains uncertain in the outbox. The app never resets that record into a payable draft. Device locking can also make file-protected journals unavailable until unlock.
+ME approval calls have a five-minute deadline; enclosing engine/authentication exchanges have a fifteen-minute budget. Native HTTP calls retain independent network deadlines and response limits. Background tasks are finite; background audio is never used to keep the bridge running. Device locking can make protected journals unavailable until unlock.
 
-Approve promptly, then use **Return to Crypton**. If the request expires, return to Crypton and retry the operation or use outbox recovery when a payment was requested. The implementation does not use background audio or unsupported background modes to keep the bridge alive.
+The outbox records payment intent before the wallet receives `createAction`. Cancellation, timeout and a lost response preserve the recovery record. Fresh empty history alone cannot authorize another payment. The companion ME update can report a definite denial from a pre-commit permission check; only that evidence plus an empty, recent history from the original wallet exposes **Retry declined payment**. See [the detailed change and verification report](WALLET_USABILITY_2_4_1.md).
 
 ## Compatibility evidence
 
-The actual local Metanet Explorer source confirms the `metanet` iOS URL scheme and `browser?url=` route in `app.json`, `ios/Metanet/Info.plist` and `hooks/useDeepLinking.ts`. The browser uses the ReactNativeWebView CWI transport in `utils/webview/walletBridge.ts` and derives its originator from the native frame URL in `walletBridgeProtocol.ts`. The local wallet repository was read only.
+The actual local Metanet Explorer source confirms the `metanet` iOS URL scheme and `browser?url=` route in `app.json`, `ios/Metanet/Info.plist` and `hooks/useDeepLinking.ts`. The browser uses the ReactNativeWebView CWI transport in `utils/webview/walletBridge.ts` and derives its originator from the native frame URL in `walletBridgeProtocol.ts`. The companion ME change adds native-app attribution, grouped declarations, persistence ordering and guarded return handling.
 
 Tests run the shipped page in a real WKWebView, transport requests to an independent SDK wallet, return through the callback route, and exercise normal crypto, denial, native MessageBox payment and delivery recovery. This harness validates the Crypton implementation and the observed protocol contract; it is not an installed ME app with a live user profile.
 

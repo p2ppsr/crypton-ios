@@ -3,6 +3,40 @@ import WebKit
 @testable import Crypton
 
 final class MEWalletTests: XCTestCase {
+    @MainActor func testOperationSessionQueuesCallsWithoutReturningOrReopeningME() async throws {
+        let opened = expectation(description:"ME opened once"), second = expectation(description:"Second method queued")
+        var launches = 0
+        let me = MEWallet(open:{ _ in launches += 1; opened.fulfill(); return true },foreground:{false},backgroundTime:false)
+        me.beginOperation()
+        let first = Task { try await me.call("isAuthenticated",[:]) }
+        await fulfillment(of:[opened],timeout:5)
+        let capability = me.token
+        let headers = ["host":String(me.origin.dropFirst("http://".count))]
+        func next() throws -> JSON {
+            try object(me.serve(LoopbackRequest(method:"GET",path:"/"+capability+"/next",headers:headers,body:Data())).body)
+        }
+        func respond(_ command:JSON) throws -> LoopbackResponse {
+            var postHeaders = headers; postHeaders["origin"] = me.origin; postHeaders["content-type"] = "application/json"
+            return me.serve(LoopbackRequest(method:"POST",path:"/"+capability+"/result",headers:postHeaders,body:try jsonData(["id":command["id"]!,"type":"CWI","isInvocation":false,"status":"success","result":["authenticated":true]])))
+        }
+        let firstCommand = try XCTUnwrap(try next()["command"] as? JSON)
+        XCTAssertTrue(try next()["command"] is NSNull,"Another page must never receive the same wallet invocation")
+        let response = try respond(firstCommand); XCTAssertEqual(response.status,200); response.sent?()
+        let authenticated = try await first.value; XCTAssertEqual(authenticated as? Bool,true)
+        XCTAssertEqual(me.token,capability,"Session must retain its capability between calls")
+        me.progress = { _ in second.fulfill() }
+        let following = Task { try await me.call("isAuthenticated",[:]) }
+        await fulfillment(of:[second],timeout:5)
+        let secondCommand = try XCTUnwrap(try next()["command"] as? JSON)
+        XCTAssertNotEqual(firstCommand["id"] as? String,secondCommand["id"] as? String)
+        XCTAssertEqual(try respond(firstCommand).status,409,"Old response cannot satisfy the next method")
+        let secondResponse = try respond(secondCommand); secondResponse.sent?()
+        _ = try await following.value
+        XCTAssertEqual(launches,1)
+        me.endOperation(); XCTAssertEqual(try next()["finished"] as? Bool,true)
+        XCTAssertTrue(me.returned(URL(string:"crypton-wallet://return/"+capability)!))
+        me.resumed(); XCTAssertTrue(me.token.isEmpty)
+    }
     @MainActor func testBobWalletUsesSeparateSchemeWithoutOfficialFallback() async throws {
         let opened = expectation(description:"Bob wallet opened"); var link:URL?
         let wallet = MEWallet(open:{ link = $0; opened.fulfill(); return true },foreground:{false},backgroundTime:false,scheme:"metanet-bob")
@@ -106,6 +140,7 @@ final class MEWalletTests: XCTestCase {
     private var active = false
     private(set) var wallet:MEWallet!
     private(set) var requests = 0
+    private(set) var launches = 0
     override init() {
         super.init()
         let content = WKUserContentController(); content.add(self,name:"fixtureME")
@@ -115,12 +150,12 @@ final class MEWalletTests: XCTestCase {
         web = WKWebView(frame:.zero,configuration:config); web.navigationDelegate = self
         wallet = MEWallet(open:{ [weak self] url in
             guard let self = self, url.scheme == "metanet", url.host == "browser", let target = URLComponents(url:url,resolvingAgainstBaseURL:false)?.queryItems?.first(where:{ $0.name == "url" })?.value.flatMap(URL.init(string:)) else { return false }
-            self.active = false; self.web.load(URLRequest(url:target)); return true
+            self.launches += 1; self.active = false; self.web.load(URLRequest(url:target)); return true
         },foreground:{ [weak self] in self?.active ?? false },backgroundTime:false)
     }
     func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage) {
         guard message.frameInfo.isMainFrame, let data = message.body as? String, let command = try? object(Data(data.utf8)), let id = command["id"] as? String,
-              command["type"] as? String == "CWI", command["isInvocation"] as? Bool == true, let method = command["call"] as? String, let args = command["args"] as? JSON else { wallet.cancel(); return }
+              command["type"] as? String == "CWI", command["isInvocation"] as? Bool == true, let method = command["call"] as? String, let args = command["args"] as? JSON else { return }
         requests += 1
         Task {
             var response:JSON = ["type":"CWI","isInvocation":false,"id":id]
@@ -384,7 +419,9 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         do { _ = try await BoundedHTTP().fetch(req) } catch { throw XCTSkip("Start scripts/messagebox-fixture.cjs to run delivery tests.") }
         let before = integer(try await fixture("delivery-stats")["payments"])!
         let id = try store.create(envelope:envelope,key:"self",recipient:"self",name:"Disposable self")
+        let beforeLaunches = page.launches
         _ = try await engine.deliver("prepare",id:id)
+        XCTAssertEqual(page.launches,beforeLaunches + 1,"One ME launch must serve the whole quote operation")
         let prepared = try XCTUnwrap(try store.get(id)["prepared"] as? JSON)
         XCTAssertEqual(try store.feeTotal(prepared["quote"] as! JSON),20)
         _ = try await fixture("drop-next-delivery")

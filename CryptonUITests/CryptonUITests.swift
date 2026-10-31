@@ -257,7 +257,7 @@ final class CryptonUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Review payment in wallet and send"].exists)
         XCTAssertTrue(app.buttons["Check wallet history"].exists)
         app.buttons["Check wallet history"].tap()
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format:"label CONTAINS %@","unsigned")).firstMatch.waitForExistence(timeout:15))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format:"label CONTAINS %@","Wallet preparation pending")).firstMatch.waitForExistence(timeout:15))
         let final = try await fixture("delivery-stats")
         XCTAssertEqual(final["payments"] as? Int,before+1,"Relaunch and recovery must not create another payment")
     }

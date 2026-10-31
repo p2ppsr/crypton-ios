@@ -219,3 +219,12 @@ enum RecipientDiscovery {
         }
     }
 }
+
+/// Wallet-provided typed refusal. An interrupted/unknown outcome never sets notCommitted.
+struct WalletRefusal: LocalizedError {
+    let method:String
+    let code:Int
+    let detail:String
+    let notCommitted:Bool
+    var errorDescription:String? { "ME declined \(method) (code \(code)): \(detail)" }
+}

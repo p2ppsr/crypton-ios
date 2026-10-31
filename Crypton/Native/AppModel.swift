@@ -13,6 +13,7 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
 @MainActor final class AppModel: ObservableObject {
     @Published var screen: Screen = .home { didSet { if oldValue == .inboxMessage && screen != .inboxMessage { clearInboxView(); scheduleRemovalRetry(1) } } }
     @Published var busy = false
+    @Published var activity = "Working…"
     @Published var error: String?
     @Published var status = "Connect your wallet"
     @Published var portalVisible = false
@@ -113,7 +114,7 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
         status = "Connect your wallet"; portalVisible = false
         if ["me","me-bob"].contains(walletMode) {
             let me = MEWallet(scheme:walletMode == "me-bob" ? "metanet-bob" : "metanet")
-            me.waiting = { [weak self] waiting in if waiting { self?.status = "Approve in ME, then return to Crypton" } }
+            me.progress = { [weak self] value in self?.activity = value; self?.status = value }
             wallet = me
         } else if walletMode == "portal" {
             let portal = PortalWallet(); portal.visibility = { [weak self] show in self?.portalVisible = show }; wallet = portal
@@ -139,14 +140,16 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     }
     private func crypto() throws -> CryptoEngine {
         if let engine = engine { return engine }
-        let engine = CryptoEngine(wallet:try connection(),store:store,inbox:inboxStore); self.engine = engine; return engine
+        let engine = CryptoEngine(wallet:try connection(),store:store,inbox:inboxStore)
+        engine.progress = { [weak self] value in self?.activity = value; self?.status = value }
+        self.engine = engine; return engine
     }
     func perform(_ work: @escaping @MainActor () async throws -> Void) {
-        guard !busy else { return }; busy = true; error = nil
+        guard !busy else { return }; busy = true; error = nil; activity = "Preparing request…"
         task = Task { [weak self] in
             guard let self = self else { return }
             defer { self.busy = false; self.task = nil; self.sound.stopEffect() }
-            do { try await work() } catch { self.error = error.localizedDescription; self.status = "Wallet request needs attention" }
+            do { try await work() } catch { self.error = error.localizedDescription; self.status = self.screen == .delivery ? "Delivery paused · open the saved record" : "Request paused · " + self.activity }
         }
     }
     func cancel() { engine?.cancel(); wallet?.cancel(); task?.cancel(); portalVisible = false }
@@ -289,6 +292,7 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     func deliver(_ action: String) {
         perform { [self] in
             let record = try store.get(deliveryID)
+            if action == "retryRefused" { try store.retryRefusedPayment(deliveryID); status = "Payment was declined · ready for a fresh quote"; return }
             if action == "cleanup" { try store.cleanup(deliveryID); wipeSentMessage(); return }
             if ["prepare","send"].contains(action) {
                 let key = deliveryRecipient.trimmingCharacters(in:.whitespacesAndNewlines)
@@ -310,7 +314,9 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
             if record["disappear"] as? Bool == true, !FileManager.default.fileExists(atPath:store.directory.appendingPathComponent(deliveryID+".json").path) {
                 wipeSentMessage(); return
             }
-            status = "Wallet connected"
+            if let current = try? store.get(deliveryID), action == "recover", let history = current["walletHistory"] as? JSON {
+                status = integer(history["totalActions"]) == 0 ? "No payment found · review recovery options" : "Payment history checked"
+            } else { status = action == "prepare" ? "Delivery fee ready · review payment in ME" : "MessageBox delivery complete" }
         }
     }
     func active(_ active: Bool) {

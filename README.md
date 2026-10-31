@@ -6,6 +6,8 @@ Native iOS port of [Crypton for Android](https://github.com/p2ppsr/crypton-andro
 
 The branch includes the SwiftUI application, native ME handoff, Android-compatible v2 engine, MessageBox inbox/outbox, optional disappearing messages, share extension, contacts and media import/export, and simulator tests. The original artwork and audio are retained.
 
+**2.4.1 wallet-flow update:** one ME page per operation, guarded automatic return, selectable BRC-116 permissions, persistent-grant ordering, fresh quote revalidation, and safe declined-payment recovery. Automatic grouped native identity requires the companion ME update. See [wallet usability and verification](docs/WALLET_USABILITY_2_4_1.md).
+
 ![Crypton home screen](docs/screenshots/home.png)
 
 ## Contents
@@ -135,7 +137,7 @@ The inbox authenticates to the pinned MessageBox service, retrieves `notificatio
 
 Under **Settings → Disappearing messages**, select these independently; both default to **Keep copies**:
 
-- **Sent: remove after confirmed delivery** captures the preference on each new delivery. After a matching MessageBox acceptance receipt, Crypton removes its encrypted outbox/payload/payment-journal copies and clears draft/result/recipient references and Crypton-owned clipboard content. Message export actions are unavailable in this mode. Uncertain payments retain recovery records and cannot start another payment. A completed cleanup marker can be retried without spending again.
+- **Sent: remove after confirmed delivery** captures the preference on each new delivery. After a matching MessageBox acceptance receipt, Crypton removes its encrypted outbox/payload/payment-journal copies and clears draft/result/recipient references and Crypton-owned clipboard content. Message export actions are unavailable in this mode. Uncertain payments retain recovery records and cannot start another payment. A definite pre-commit wallet refusal plus fresh empty history allows an explicit retry. A completed cleanup marker can be retried without spending again.
 - **Received: decrypt once and remove** applies to inbox decryption. After successful decryption, Crypton atomically replaces local ciphertext with a minimal pending-removal record, automatically sends an authenticated acknowledgement, then verifies an ID-filtered lookup no longer returns the message. Only then does it report **Server removal confirmed**. Failed decryption never authorizes acknowledgement. Failed or uncertain deletion stays pending, cannot rehydrate ciphertext on refresh, and retries after closing the one-view result and on foreground/restart. Wallet permission/profile errors pause automatic prompts until the user refreshes/retries.
 
 The private result and any nested layers are viewable in memory without saving a new envelope. Closing, leaving the view or backgrounding after viewing clears it. Copy/share/selectable plaintext are unavailable. A result completed while ME is foreground waits for the first Crypton view; process death can lose that one-view result. iOS app previews and captured-screen views are covered. iOS screenshot blocking cannot match Android's secure-window flag; this is not a promise of forensic erasure, removal of wallet/on-chain records, external copies or server backups.

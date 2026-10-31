@@ -33,7 +33,7 @@ async function nativeFetch(operation,url,config={}) {
   return new Response(Uint8Array.from(Utils.toArray(result.body,'base64')),{status:result.status,headers:result.headers});
 }
 function authClient(operation,wallet) {
-  return new bsv.AuthFetch(wallet,undefined,undefined,undefined,{requestTimeoutMs:120000,maxResponseBytes:2000000},(url,config)=>nativeFetch(operation,url,config));
+  return new bsv.AuthFetch(wallet,undefined,undefined,undefined,{requestTimeoutMs:900000,maxResponseBytes:2000000},(url,config)=>nativeFetch(operation,url,config));
 }
 function checkedQuote(quote,agent) {
   if(quote.deliveryAgentIdentityKey!==agent)throw Error('MessageBox server identity changed.');
@@ -99,9 +99,10 @@ window.runDelivery=async request=>{
       const prepared={sender,recipient,quote,messageId,body,...plan,quotedAt:Date.now()};
       await deliveryRpc(operation,'checkpoint',{kind:'prepared',value:prepared});result={prepared:true};
     } else if(request.action==='recover') {
+      if(sender!==r.prepared.sender)throw Error('Switch back to the wallet used for this payment.');
       const history=await wallet.listActions({labels:['crypton-delivery-'+r.id],labelQueryMode:'all',includeOutputs:true,includeOutputLockingScripts:true,includeLabels:true,limit:10});
       const transactions=(history.actions||[]).map(a=>({txid:a.txid,status:a.status}));
-      await deliveryRpc(operation,'checkpoint',{kind:'history',value:{transactions,totalActions:history.totalActions}});
+      await deliveryRpc(operation,'checkpoint',{kind:'history',value:{transactions,totalActions:history.totalActions,sender}});
       if(history.totalActions===1 && transactions.length===1 && ['unproven','completed'].includes(transactions[0].status)) {
         if(sender!==r.prepared.sender)throw Error('Switch back to the wallet used for this payment.');
         const evidence=await deliveryRpc(operation,'paymentProof',{});
@@ -122,7 +123,8 @@ window.runDelivery=async request=>{
       const required=p.quote.deliveryFee+p.quote.recipientFee;
       if(request.action==='send') {
         const current=await getQuote(client,r,p.recipient);
-        if(current.deliveryFee!==p.quote.deliveryFee||current.recipientFee!==p.quote.recipientFee||current.deliveryAgentIdentityKey!==p.quote.deliveryAgentIdentityKey||Date.now()-p.quotedAt>300000)throw Error('The quote changed or expired. Refresh the fee before sending.');
+        if(current.deliveryFee!==p.quote.deliveryFee||current.recipientFee!==p.quote.recipientFee||current.deliveryAgentIdentityKey!==p.quote.deliveryAgentIdentityKey)throw Error('The quote changed or expired. Refresh the fee before sending.');
+        await deliveryRpc(operation,'checkpoint',{kind:'quoteRevalidated',value:{quote:current}});
         if(required) {
           const action=await wallet.createAction(p.action);
           payment=validatedPayment(action,p);
