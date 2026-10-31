@@ -1,5 +1,7 @@
 # iOS port verification — 30 October 2026
 
+For the recipient-search addition and 31 October's expanded 36-test suite, see [certified recipient search](RECIPIENT_SEARCH.md). This report preserves the original port verification and live messaging scope below.
+
 The current Android working tree at `p2ppsr/crypton-android` was the behavior source. The existing `p2ppsr/crypton-ios` checkout supplied the iOS project, application identity, original portal contract, artwork and sound assets. Android sources were read only.
 
 ## Results

@@ -13,6 +13,7 @@ The branch includes the SwiftUI application, native ME handoff, Android-compatib
 - [Requirements and quick start](#requirements-and-quick-start)
 - [Connect Metanet Explorer](#connect-metanet-explorer)
 - [Understand the three identities](#understand-the-three-identities)
+- [Find a recipient with SocialCert](#find-a-recipient-with-socialcert)
 - [Send and receive messages](#send-and-receive-messages)
 - [MessageBox fees and recovery](#messagebox-fees-and-recovery)
 - [Contacts, QR codes and sharing](#contacts-qr-codes-and-sharing)
@@ -70,14 +71,32 @@ These public keys serve different purposes:
 
 For a MessageBox send to another person, obtain both their **Crypton receiving key** and their **ME wallet identity**. Encryption uses the first; delivery uses the second. Crypton remembers public mappings entered for later deliveries.
 
+The SocialCert search flow below instead selects a certified **wallet identity** for both encryption and delivery. V2's compatible wallet-decryption path opens these messages; the usual app-derived receiving-key workflow remains available.
+
 When legacy mode is enabled, **My identity** instead shows the wallet identity used by the legacy format.
+
+## Find a recipient with SocialCert
+
+1. Choose **New message** and enter an email, social handle, name or compressed wallet public key in **Email, social handle or name**.
+2. Tap **Search**. Typing alone sends no lookup. With native ME, complete the request and return to Crypton.
+3. Review the returned name, certification label, wallet identity and expandable certifier public key. Choose **Use this recipient** explicitly; Crypton never selects the first match automatically.
+4. Optionally choose **Save recipient contact** in the composer. This stores the public name/key and wallet-delivery mapping locally; it does not publish a certificate or write to your phone contacts. Saved contacts are address-book entries; search again to refresh certificate information.
+5. Write and encrypt your message. **Send with MessageBox** prefills the selected wallet identity, including when you later reuse the saved contact. Fee review and payment approval are unchanged.
+
+Search uses SDK `IdentityClient` over the connected wallet's `discoverByAttributes` or `discoverByIdentityKey` interface, following ME's Send & Receive implementation. The wallet performs discovery under its own trust configuration. Crypton neither changes trusted certifiers nor overrides their trust threshold. Results depend on publicly discoverable certificate fields; possessing a private SocialCert certificate alone does not guarantee a search match. Names and social handles are not unique, so compare the displayed keys and certification details before selecting.
+
+One explicit search returns up to **20 certificates**. Refine the query for more specific results. Editing the query clears its previous results. Empty matches are distinguished from denied, unavailable or malformed wallet responses; cancelled searches cannot select a recipient. Search text and certificate results are held in memory. Saved contacts persist only when you choose to save them.
+
+Native ME and compatible BRC-100 JSON wallets support this flow. The original portal does not implement certificate discovery. No certificate issuance, publication or payment is requested by recipient search. Existing manual key, QR and contact entry remains available. Contact vCard export carries its public key; it does not export certification evidence or mark the imported contact as newly certified.
+
+See [Babbage's certificate/discovery guide](https://docs.projectbabbage.com/docs/guides/wallet/certificates), [the SDK identity reference](https://bsv-blockchain.github.io/ts-sdk/reference/identity/) and [Crypton's search verification with screenshot](docs/RECIPIENT_SEARCH.md). The automated search checks use disposable wallet responses and do not establish availability of the live SocialCert directory.
 
 ## Send and receive messages
 
 ### Send a v2 message
 
 1. Select **New message**.
-2. Choose **Myself**, enter the recipient's Crypton receiving key, or select a saved contact.
+2. Choose **Myself**, find a certified wallet identity with **Search**, enter the recipient's Crypton receiving key, or select a saved contact.
 3. Enter the plaintext and choose **Encrypt message**. Complete any ME requests and return to Crypton.
 4. Share the resulting encrypted text or QR image, or choose **Send with MessageBox**.
 5. For MessageBox, enter the recipient's ME wallet identity, choose **Check delivery fee**, and review the quote.
@@ -243,13 +262,14 @@ Fixtures use disposable SDK wallets and synthetic transactions. They do not acce
 
 ## Verification and limitations
 
-Recorded local verification on **30 October 2026**:
+Automated verification on **31 October 2026**; installed-wallet live interoperability checks on **30 October 2026**:
 
 | Check | Result |
 | --- | --- |
-| Native/integration tests | 20 passed |
-| UI tests, including Files/Photos/HEIC, nested content, sharing and force-quit recovery | 11 passed |
-| Total fixture-backed suite | **31 passed; no skips or failures** |
+| Native/integration tests | 23 passed |
+| UI tests, including recipient search, Files/Photos/HEIC, nested content, sharing and force-quit recovery | 13 passed |
+| Total fixture-backed suite | **36 passed; no skips or failures** |
+| Certified recipient search, selection, contact saving and delivery prefilling | Passed with disposable wallets, including the native ME page/CWI path |
 | Standalone bundled-engine/independent SDK interoperability | Passed |
 | Simulator and unsigned iPhone Release builds | Passed |
 | Installed iOS ME → production MessageBox → Android ME → Crypton decryption | Passed on emulators |
@@ -261,11 +281,12 @@ The live checks used separately reviewed wallet permissions and manually approve
 Known boundaries:
 
 - The original portal failed TLS setup in the test environment; its login and message operations remain unverified.
+- Live SocialCert directory lookup through an installed ME wallet profile remains unverified; the automated discovery fixture models the wallet's already-validated certificate results.
 - Phone-contact/vCard and clipboard round trips were exercised. Reminders received a test draft; print and Watch flows opened previews. Completing account-backed sharing, real printing and Watch installation was not verified.
 - Insufficient funds, denied permissions, changed quotes, dropped connections and process termination during payment were tested with disposable wallets. Those failures were not induced on the funded production wallets.
 - Audio tests use real simulator players and simulated interruption notifications. Physical camera scanning, cellular interruptions, device locking/provisioning and a full iPad/device matrix remain outside emulator coverage.
 
-See [port verification](docs/PORT_VERIFICATION.md), [remaining-functions QA](docs/REMAINING_FUNCTIONS_QA.md) and [native ME handoff](docs/ME_IOS_HANDOFF.md) for more detail.
+See [recipient-search verification](docs/RECIPIENT_SEARCH.md), [port verification](docs/PORT_VERIFICATION.md), [remaining-functions QA](docs/REMAINING_FUNCTIONS_QA.md) and [native ME handoff](docs/ME_IOS_HANDOFF.md) for more detail.
 
 ## Troubleshooting
 

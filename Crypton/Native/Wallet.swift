@@ -57,8 +57,9 @@ final class BoundedHTTP: NSObject, URLSessionDataDelegate {
     func call(_ method: String, _ args: JSON, raw: Bool = false) async throws -> Any {
         guard active == nil else { throw CryptonError("A wallet request is already in progress.") }
         let allowed = Set(["isAuthenticated","waitForAuthentication","getPublicKey","encrypt","decrypt","createHmac","verifyHmac","createSignature","verifySignature","createAction","listActions"])
-        guard allowed.contains(method) else { throw CryptonError("Unsupported wallet request.") }
-        let params = raw ? args : try Wire.walletArguments(method, args)
+        guard allowed.contains(method) || RecipientDiscovery.methods.contains(method) else { throw CryptonError("Unsupported wallet request.") }
+        let discovery = RecipientDiscovery.methods.contains(method)
+        let params = discovery ? try RecipientDiscovery.arguments(method,args) : raw ? args : try Wire.walletArguments(method, args)
         let body = try jsonData(params)
         guard body.count <= 500_000 else { throw CryptonError("Wallet request too large.") }
         var request = URLRequest(url: endpoint.appendingPathComponent(method))
@@ -72,6 +73,7 @@ final class BoundedHTTP: NSObject, URLSessionDataDelegate {
         guard (200..<300).contains(response.statusCode) else { throw CryptonError("Wallet request failed (HTTP \(response.statusCode)). Open your wallet and retry.") }
         let result = try object(bytes)
         guard result["isError"] as? Bool != true else { throw CryptonError("The wallet declined the request. Check its permission prompt and retry.") }
+        if discovery { return try RecipientDiscovery.response(result,params) }
         return raw ? result : try Wire.walletResult(method, result)
     }
     func cancel() { active?.cancel() }

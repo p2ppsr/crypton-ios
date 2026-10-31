@@ -133,6 +133,76 @@ final class MEWalletTests: XCTestCase {
 }
 
 final class MEAndDeliveryIntegrationTests: XCTestCase {
+    @MainActor func testNativeMESearchSelectionContactAndEncryption() async throws {
+        try await available()
+        let page = MEPageFixture(); defer { page.close() }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = DeliveryStore(directory:directory)
+        let suite = "crypton.search." + UUID().uuidString, defaults = UserDefaults(suiteName:suite)!
+        defer { defaults.removePersistentDomain(forName:suite); try? FileManager.default.removeItem(at:directory) }
+        defaults.set(false,forKey:"soundEnabled"); defaults.set(true,forKey:"guideSeen")
+        let recipient = try await fixture("recipient"), statsBefore = try await fixture("delivery-stats")
+        let key = try XCTUnwrap(recipient["publicKey"] as? String)
+        defaults.set([key:"0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"],forKey:"deliveryKeys")
+        let model = AppModel(defaults:defaults,store:store,wallet:page.wallet)
+        defer { model.cancel() }
+        func settle() async throws {
+            for _ in 0..<200 {
+                if !model.busy { return }
+                try await Task.sleep(nanoseconds:100_000_000)
+            }
+            XCTFail("Search model did not finish"); model.cancel()
+        }
+        model.begin(decrypt:false); model.recipientQuery = "ambiguous"
+        XCTAssertEqual(page.requests,0,"Typing must not open ME")
+        model.searchRecipients(); try await settle()
+        XCTAssertNil(model.error); XCTAssertEqual(model.searchResults.count,2)
+        XCTAssertEqual(model.peer,"self"); XCTAssertEqual(model.screen,.recipient,"A result must never be auto-selected")
+        let stale = try XCTUnwrap(model.searchResults.first)
+        model.recipientQuery = "bob@example.com"
+        XCTAssertTrue(model.searchResults.isEmpty); XCTAssertFalse(model.searchCompleted)
+        model.chooseDiscovered(stale); XCTAssertNotNil(model.error); XCTAssertEqual(model.peer,"self")
+        model.searchRecipients(); try await settle()
+        let selected = try XCTUnwrap(model.searchResults.first)
+        XCTAssertEqual(selected.key,key); XCTAssertTrue(selected.certification.contains("Fixture SocialCert"))
+        model.chooseDiscovered(selected)
+        XCTAssertEqual(model.peer,key); XCTAssertEqual(model.screen,.compose); XCTAssertTrue(model.contacts.isEmpty)
+        model.saveDiscoveredRecipient(); XCTAssertEqual(model.contacts.first?.walletIdentity,key)
+        model.message = "Discovered recipient: café 🌍"; model.process(); try await settle()
+        XCTAssertNil(model.error)
+        let envelope = model.output
+        let opened = try await fixture("v2-open",["envelope":envelope])
+        XCTAssertEqual(opened["text"] as? String,model.message)
+        model.newDelivery(); XCTAssertEqual(model.deliveryRecipient,key,"Search must override an obsolete delivery-key mapping")
+        XCTAssertEqual(try store.get(model.deliveryID)["recipient"] as? String,key)
+        let reopened = AppModel(defaults:defaults,store:store,wallet:page.wallet)
+        reopened.chooseContact(try XCTUnwrap(reopened.contacts.first)); reopened.output = envelope; reopened.outputKind = "encrypted"
+        reopened.newDelivery(); XCTAssertEqual(reopened.deliveryRecipient,key)
+        let statsAfter = try await fixture("delivery-stats")
+        XCTAssertEqual(integer(statsAfter["payments"]),integer(statsBefore["payments"]),"Discovery, contact saving and encryption must not make payments")
+    }
+    @MainActor func testNativeMEDiscoveryEmptyDenialMalformedOfflineAndCancellation() async throws {
+        try await available()
+        let page = MEPageFixture(); defer { page.close() }
+        let engine = CryptoEngine(wallet:page.wallet,store:DeliveryStore()); defer { engine.close() }
+        let empty = try await engine.search("empty@example.com"); XCTAssertTrue(empty.isEmpty)
+        let recipient = try await fixture("recipient")
+        let key = try XCTUnwrap(recipient["publicKey"] as? String)
+        let byKey = try await engine.search(key); XCTAssertEqual(byKey.first?.key,key)
+        for preparation in ["deny-next","offline-next"] {
+            _ = try await fixture(preparation)
+            do { _ = try await engine.search("bob@example.com"); XCTFail("Failed discovery was treated as a result") } catch { }
+        }
+        do { _ = try await engine.search("malformed"); XCTFail("Malformed discovery key was accepted") } catch { }
+        let opened = expectation(description:"Search opened ME")
+        let held = MEWallet(open:{ _ in opened.fulfill(); return true },foreground:{false},backgroundTime:false)
+        let heldEngine = CryptoEngine(wallet:held,store:DeliveryStore()); defer { heldEngine.close() }
+        let cancelled = Task { try await heldEngine.search("bob@example.com") }
+        await fulfillment(of:[opened],timeout:10)
+        heldEngine.cancel()
+        do { _ = try await cancelled.value; XCTFail("Cancelled search returned results") } catch { }
+        XCTAssertTrue(held.token.isEmpty)
+    }
     @MainActor private func fixture(_ path:String,_ args:JSON = [:]) async throws -> JSON {
         var request = URLRequest(url:URL(string:"http://127.0.0.1:18776/test/"+path)!)
         request.httpMethod = "POST"; request.httpBody = try jsonData(args)

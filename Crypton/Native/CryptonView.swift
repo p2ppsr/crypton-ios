@@ -123,13 +123,40 @@ struct CryptonView: View {
     }
     private var recipient: some View {
         VStack(alignment:.leading,spacing:18) {
-            title(model.decrypting ? "Choose sender" : "Choose recipient",model.decrypting ? "For legacy ciphertext, choose the identity that encrypted it." : "Use a Crypton receiving key shared by your friend.")
+            title(model.decrypting ? "Choose sender" : "Choose recipient",model.decrypting ? "For legacy ciphertext, choose the identity that encrypted it." : "Search certified identities, or use a receiving key shared by your friend.")
             action("Myself","person",primary:true) { model.legacySenderSelected = true; model.choose("self",name:"Myself") }
+            if !model.decrypting { recipientSearch }
             textField("Identity public key",$model.keyDraft,key:true)
             action("Continue",primary:true) { model.legacySenderSelected = true; model.choose(model.keyDraft) }
             identityImports
-            ForEach(model.contacts) { contact in action(contact.name,"person.crop.circle") { model.legacySenderSelected = true; model.choose(contact.key,name:contact.name) } }
+            ForEach(model.contacts) { contact in action(contact.name,"person.crop.circle") { model.chooseContact(contact) } }
             back(model.decrypting ? .compose : .home)
+        }
+    }
+    private var recipientSearch: some View {
+        VStack(alignment:.leading,spacing:14) {
+            Text("FIND WITH SOCIALCERT").font(.caption).foregroundStyle(mint)
+            textField("Email, social handle or name",$model.recipientQuery)
+                .accessibilityIdentifier("recipientSearchQuery")
+            action("Search","magnifyingglass",primary:true) { model.searchRecipients() }
+            Text("Search uses your wallet’s trusted certificates and publicly discoverable fields. In ME, complete the request and return to Crypton.").font(.footnote).foregroundStyle(.secondary)
+            ForEach(model.searchResults) { identity in
+                VStack(alignment:.leading,spacing:10) {
+                    Label(identity.name,systemImage:"person.crop.circle").font(.headline)
+                    Text(identity.certification).font(.subheadline).foregroundStyle(mint)
+                    Text("Wallet identity").font(.caption).foregroundStyle(.secondary)
+                    ScrollView(.horizontal) { Text(identity.key).font(.system(.caption,design:.monospaced)).textSelection(.enabled).fixedSize() }
+                    DisclosureGroup("Certifier public key") {
+                        ScrollView(.horizontal) { Text(identity.certifier).font(.system(.caption,design:.monospaced)).textSelection(.enabled).fixedSize() }
+                    }
+                    Button("Use this recipient") { model.chooseDiscovered(identity) }
+                        .accessibilityIdentifier("selectRecipient-" + identity.key)
+                }.padding(16).background(panel,in:RoundedRectangle(cornerRadius:14))
+            }
+            if model.searchCompleted {
+                Text(model.searchResults.isEmpty ? "No matching identities returned by your wallet. Check the spelling, public certificate publication and wallet trust settings, or enter a receiving key below." : "Showing up to 20 certificates. Refine your search if needed. Confirm the identity before selecting it.")
+                    .font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("recipientSearchSummary")
+            }
         }
     }
     private var identityImports: some View {
@@ -144,6 +171,11 @@ struct CryptonView: View {
             title(model.decrypting ? "Open a secret." : "Write a secret.")
             if model.decrypting && Wire.isEnvelope(model.ciphertext) { Label("Sender included in v2 envelope",systemImage:"checkmark.shield").font(.subheadline).foregroundStyle(mint) }
             else { HStack { Text((model.decrypting ? "From: " : "To: ") + model.peerName); Spacer(); Button("Change") { model.screen = .recipient } } }
+            if !model.decrypting, let identity = model.selectedIdentity {
+                Text(identity.certification).font(.footnote).foregroundStyle(mint)
+                Text("This certified wallet identity will receive the encrypted message and MessageBox delivery.").font(.footnote).foregroundStyle(.secondary)
+                Button(model.recipientSaved ? "Recipient saved" : "Save recipient contact") { model.saveDiscoveredRecipient() }.disabled(model.recipientSaved)
+            }
             Text(model.decrypting ? "Encrypted text" : "Your message").font(.subheadline).foregroundStyle(.secondary)
             MessageEditor(text:model.decrypting ? $model.ciphertext : $model.message).padding(12).frame(height:230).background(panel,in:RoundedRectangle(cornerRadius:12))
                 .onChange(of:model.message) { value in if value.utf16.count > 16_000 { model.message = String(value.prefix(16_000)) } }
@@ -191,7 +223,7 @@ struct CryptonView: View {
             title("Your contacts.","Only names and public identity keys are saved.")
             ForEach(model.contacts) { contact in
                 VStack(alignment:.leading,spacing:10) {
-                    Button(contact.name) { model.choose(contact.key,name:contact.name); model.legacySenderSelected = true }
+                    Button(contact.name) { model.chooseContact(contact) }
                     Text(contact.key).font(.system(.caption,design:.monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
                     HStack { Button("Export contact") { export(contact) }; Spacer(); Button("Delete",role:.destructive) { model.deleteContact(contact) } }.font(.caption)
                 }.padding(16).background(panel,in:RoundedRectangle(cornerRadius:12))

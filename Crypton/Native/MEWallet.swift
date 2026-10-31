@@ -35,8 +35,8 @@ import Security
     func call(_ method:String,_ args:JSON,raw:Bool = false) async throws -> Any {
         guard !starting, continuation == nil else { throw CryptonError("A wallet request is already in progress.") }
         let allowed = Set(["isAuthenticated","waitForAuthentication","getPublicKey","encrypt","decrypt","createHmac","verifyHmac","createSignature","verifySignature","createAction","listActions"])
-        guard allowed.contains(method) else { throw CryptonError("Unsupported ME wallet request.") }
-        let params = raw ? args : try Wire.walletArguments(method,args)
+        guard allowed.contains(method) || RecipientDiscovery.methods.contains(method) else { throw CryptonError("Unsupported ME wallet request.") }
+        let params = RecipientDiscovery.methods.contains(method) ? try RecipientDiscovery.arguments(method,args) : raw ? args : try Wire.walletArguments(method,args)
         guard try jsonData(params).count <= 500_000 else { throw CryptonError("ME request is too large.") }
         let run = UUID(); generation = run; starting = true
         let server = LoopbackServer(); self.server = server
@@ -120,7 +120,10 @@ import Security
                 let value = try object(request.body)
                 guard response == nil, value["id"] as? String == id, value["type"] as? String == "CWI", value["isInvocation"] as? Bool == false, integer(value["isInvocation"]) == nil else { return LoopbackResponse(status:409) }
                 if value["status"] as? String == "success", let result = value["result"] as? JSON {
-                    do { response = .success(raw ? result : try Wire.walletResult(method,result)) }
+                    do {
+                        if RecipientDiscovery.methods.contains(method), let args = command?["args"] as? JSON { response = .success(try RecipientDiscovery.response(result,args)) }
+                        else { response = .success(raw ? result : try Wire.walletResult(method,result)) }
+                    }
                     catch { response = .failure(error) }
                 } else {
                     let detail = String((value["description"] as? String ?? "Review the wallet permission prompt and retry.").prefix(300))

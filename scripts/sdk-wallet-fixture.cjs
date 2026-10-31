@@ -14,6 +14,16 @@ let redirectNext = false;
 let losePayment = false, holdPayment = false, paymentFailure = null, offlineNext = false; const actionHistory = [];
 const deliveryFixture={payments:0,paymentAttempts:0,drop:false,changedFee:false,receiptCount:0};
 const protocol = { protocolID: [1, 'crypton'], keyID: '1' };
+let discoveryRequests = 0;
+// Models a wallet's already-verified discovery response. No public certificate
+// is issued and no real directory is queried by this fixture.
+function discoveryCertificate(subject, email) {
+  return {subject,certifier:new PrivateKey(2).toPublicKey().toString(),
+    type:'exOl3KM0dIJ04EW5pZgbZmPag6MdJXd3/a1enmUU/BA=',
+    serialNumber:Utils.toBase64(Array(32).fill(3)),revocationOutpoint:'00'.repeat(32)+'.0',
+    signature:'00'.repeat(64),fields:{email:'fixture-only'},publiclyRevealedKeyring:{},
+    decryptedFields:{email},certifierInfo:{name:'Fixture SocialCert',iconUrl:'https://example.com/icon.png',description:'Disposable fixture',trust:5}};
+}
 async function forIOS(content) {
   const {hmac}=await alice.createHmac({protocolID:[2,'crypton'],keyID:'1',counterparty:'self',data:Utils.toArray('crypton/messaging-identity/v1/0','utf8')});
   const recipient=new PrivateKey(hmac,'be',undefined,'error').toPublicKey().toString();hmac.fill(0);
@@ -42,6 +52,7 @@ const server = http.createServer(async (request, response) => {
     if (request.url === '/test/delivery-config') result = {host:'http://127.0.0.1:18777', agent:new PrivateKey(2).toPublicKey().toString()};
     else if (request.url === '/test/qa-config') result = {heicReady:process.env.CRYPTON_QA_HEIC_READY==='1'};
     else if (request.url === '/test/recipient') result = { publicKey: bobKey };
+    else if (request.url === '/test/discovery-stats') result = {requests:discoveryRequests};
     else if (request.url === '/test/v2-for-ios') {
       let recipient = aliceKey;
       if (args.mode !== 'root') {
@@ -90,6 +101,16 @@ const server = http.createServer(async (request, response) => {
       }
       if (denyNext) { denyNext = false; throw new Error('Fixture permission denied'); }
       if (request.url === '/isAuthenticated' || request.url === '/waitForAuthentication') result = { authenticated: true };
+      else if (request.url === '/discoverByAttributes' || request.url === '/discoverByIdentityKey') {
+        discoveryRequests++;
+        if(args.limit!==20 || args.offset!==0 || args.seekPermission!==true)throw Error('Unexpected discovery scope');
+        const query=args.attributes?.any || args.identityKey;
+        let certificates = query==='empty@example.com' ? [] : [discoveryCertificate(bobKey,'bob@example.com')];
+        if(query==='ambiguous')certificates.push(discoveryCertificate((await stranger.getPublicKey({identityKey:true})).publicKey,'another@example.com'));
+        if(query==='malformed')certificates[0].subject='02'+'00'.repeat(32);
+        if(request.url==='/discoverByIdentityKey' && args.identityKey!==bobKey)certificates=[];
+        result={totalCertificates:certificates.length,certificates};
+      }
       else if (request.url === '/getPublicKey') result = await alice.getPublicKey(args);
       else if (request.url === '/createAction') {
         if(args.description!=='MessageBox delivery payment'||args.options.randomizeOutputs!==false)throw Error('Unexpected fixture payment');

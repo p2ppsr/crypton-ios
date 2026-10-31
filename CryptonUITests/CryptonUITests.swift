@@ -1,6 +1,48 @@
 import XCTest
 
 final class CryptonUITests: XCTestCase {
+    @MainActor func testRecipientSearchSelectSaveEncryptAndDeliveryPrefill() async throws {
+        let recipient:[String:Any]
+        do { recipient = try await fixture("recipient") } catch { throw XCTSkip("Start the disposable SDK fixture") }
+        let statsBefore = try await fixture("discovery-stats")
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--sdk-wallet-fixture","--messagebox-fixture","--reset-qa-outbox"]; app.launch()
+        app.buttons["New message"].tap()
+        let query = app.textFields["recipientSearchQuery"].exists ? app.textFields["recipientSearchQuery"] : app.textViews["recipientSearchQuery"]
+        query.tap(); query.typeText("bob@example.com")
+        let statsTyped = try await fixture("discovery-stats")
+        XCTAssertEqual(statsTyped["requests"] as? Int,statsBefore["requests"] as? Int,"Typing alone must not query the wallet")
+        app.swipeUp(); app.buttons["Search"].tap()
+        let select = app.buttons["selectRecipient-" + (recipient["publicKey"] as! String)]
+        XCTAssertTrue(select.waitForExistence(timeout:15))
+        XCTAssertFalse(app.staticTexts["Write a secret."].exists,"Require explicit selection")
+        let shot = XCTAttachment(screenshot:app.screenshot()); shot.name = "Certified recipient search results (disposable fixture)"; shot.lifetime = .keepAlways; add(shot)
+        select.tap()
+        XCTAssertTrue(app.buttons["Save recipient contact"].waitForExistence(timeout:5)); app.buttons["Save recipient contact"].tap()
+        XCTAssertTrue(app.buttons["Recipient saved"].exists)
+        app.textViews["messageEditor"].tap(); app.textViews["messageEditor"].typeText("Sent to the selected certified identity")
+        app.swipeUp(); app.buttons["Encrypt message"].tap()
+        XCTAssertTrue(app.staticTexts["Sealed and ready."].waitForExistence(timeout:15))
+        let envelope = app.staticTexts["resultText"].label
+        let opened = try await fixture("v2-open",["envelope":envelope])
+        XCTAssertEqual(opened["text"] as? String,"Sent to the selected certified identity")
+        app.swipeUp(); app.buttons["Send with MessageBox"].tap()
+        let walletKey = app.textFields["Recipient wallet identity (blank for self)"].exists ? app.textFields["Recipient wallet identity (blank for self)"] : app.textViews["Recipient wallet identity (blank for self)"]
+        XCTAssertTrue(walletKey.waitForExistence(timeout:5)); XCTAssertEqual(walletKey.value as? String,recipient["publicKey"] as? String)
+        app.buttons["Crypton home"].tap(); app.buttons["Contacts"].tap()
+        XCTAssertTrue(app.buttons["bob@example.com"].exists)
+    }
+    @MainActor func testRecipientSearchEmptyAndEditingClearsResults() async throws {
+        do { _ = try await fixture("recipient") } catch { throw XCTSkip("Start the disposable SDK fixture") }
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--sdk-wallet-fixture"]; app.launch()
+        app.buttons["New message"].tap()
+        let query = app.textFields["recipientSearchQuery"].exists ? app.textFields["recipientSearchQuery"] : app.textViews["recipientSearchQuery"]
+        query.tap(); query.typeText("empty@example.com"); app.swipeUp(); app.buttons["Search"].tap()
+        XCTAssertTrue(app.staticTexts["recipientSearchSummary"].waitForExistence(timeout:15))
+        XCTAssertTrue(app.staticTexts["recipientSearchSummary"].label.contains("No matching identities"))
+        app.swipeDown(); query.tap(); query.typeText("x")
+        XCTAssertFalse(app.staticTexts["recipientSearchSummary"].exists)
+        XCTAssertFalse(app.buttons["Use this recipient"].exists)
+    }
     override func setUpWithError() throws { continueAfterFailure = false }
     func app() -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--uitesting"]; app.launch(); return app

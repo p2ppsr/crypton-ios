@@ -1,7 +1,7 @@
 'use strict';
 const statusText = document.getElementById('status'), returnLink = document.getElementById('return');
 const sent = new Set();
-const allowed = new Set(['isAuthenticated','waitForAuthentication','getPublicKey','getNetwork','encrypt','decrypt','createHmac','verifyHmac','createSignature','verifySignature','createAction','listActions']);
+const allowed = new Set(['isAuthenticated','waitForAuthentication','getPublicKey','getNetwork','encrypt','decrypt','createHmac','verifyHmac','createSignature','verifySignature','createAction','listActions','discoverByAttributes','discoverByIdentityKey']);
 let current = null, stopped = false;
 window.addEventListener('message', async event => {
   if (event.source !== window && event.source !== null) return;

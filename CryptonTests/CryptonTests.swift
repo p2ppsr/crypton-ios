@@ -11,6 +11,26 @@ final class CryptonTests: XCTestCase {
         XCTAssertThrowsError(try Wire.identity("02" + String(repeating:"f",count:64)))
         XCTAssertThrowsError(try Wire.identity("04" + String(key.dropFirst(2))))
     }
+    func testDiscoveryScopeAndUntrustedMetadata() throws {
+        let lookup = try RecipientDiscovery.request("  bob@example.com  ")
+        XCTAssertEqual(lookup.method,"discoverByAttributes")
+        XCTAssertEqual((lookup.args["attributes"] as? JSON)?["any"] as? String,"bob@example.com")
+        XCTAssertNoThrow(try RecipientDiscovery.arguments(lookup.method,lookup.args))
+        XCTAssertEqual(try RecipientDiscovery.request(key).method,"discoverByIdentityKey")
+        for query in ["a",String(repeating:"a",count:257),"bob\n@example.com","bob\u{202E}@example.com","02"+String(repeating:"0",count:64)] { XCTAssertThrowsError(try RecipientDiscovery.request(query)) }
+        for changed:JSON in [["seekPermission":false],["limit":21],["offset":1],["trustedCertifiers":[key]],["attributes":["email":"bob@example.com"]]] {
+            var args = lookup.args; changed.forEach { args[$0.key] = $0.value }
+            XCTAssertThrowsError(try RecipientDiscovery.arguments(lookup.method,args))
+        }
+        XCTAssertNoThrow(try RecipientDiscovery.response(["totalCertificates":0,"certificates":[]],lookup.args))
+        for response:JSON in [["totalCertificates":true,"certificates":[]],["totalCertificates":-1,"certificates":[]],["totalCertificates":1,"certificates":[["subject":key]]],["isError":true,"totalCertificates":0,"certificates":[]]] { XCTAssertThrowsError(try RecipientDiscovery.response(response,lookup.args)) }
+        let row:JSON = ["key":key,"name":"bob@example.com","certification":"Email certified by Fixture SocialCert","certifier":key,"certificateType":"email"]
+        XCTAssertEqual(try RecipientDiscovery.identities([row,row]).count,1)
+        var bad = row; bad["certifier"] = "02"+String(repeating:"0",count:64)
+        XCTAssertThrowsError(try RecipientDiscovery.identities([bad]))
+        let oldContact = Data("[{\"name\":\"Existing contact\",\"key\":\"\(key)\"}]".utf8)
+        XCTAssertNil(try JSONDecoder().decode([PublicContact].self,from:oldContact).first?.walletIdentity)
+    }
     func testEnvelopeRejectsMetadataAndMalformedCiphertext() throws {
         var e = try Wire.envelope(envelope()); e["recipient"] = key
         XCTAssertThrowsError(try Wire.envelope(jsonString(e)))

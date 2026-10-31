@@ -9,6 +9,8 @@ import WebKit
     private var pending: CheckedContinuation<Any, Error>?
     private var operation: String?
     private var delivery: (id: String, action: String)?
+    private var discovery: (method:String,args:JSON)?
+    private var discoveryRequested = false
     private var timer: Task<Void,Never>?
     private var http: BoundedHTTP?
     private var root: URL?
@@ -25,17 +27,24 @@ import WebKit
         }
     }
     func run(_ action: String, text: String = "", peer: String = "self") async throws -> Any {
+        guard pending == nil else { throw CryptonError("Another Crypton request is in progress.") }
         if action == "open" { _ = try Wire.envelope(text) }
         if action == "seal" {
             if peer != "self" { _ = try Wire.identity(peer) }
             guard !text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty, text.utf16.count <= 16_000 else { throw CryptonError("Enter a message of at most 16,000 characters.") }
         }
-        delivery = nil
+        delivery = nil; discovery = nil
         return try await start("runCrypto", request:["action":action,"text":text,"peer":peer])
+    }
+    func search(_ query:String) async throws -> [DiscoveredIdentity] {
+        guard pending == nil else { throw CryptonError("Another Crypton request is in progress.") }
+        let request = try RecipientDiscovery.request(query)
+        delivery = nil; discovery = request; discoveryRequested = false
+        return try RecipientDiscovery.identities(await start("runDiscovery",request:["method":request.method,"args":request.args]))
     }
     func deliver(_ action: String, id: String) async throws -> Any {
         guard pending == nil else { throw CryptonError("Another Crypton request is in progress.") }
-        try store.begin(id,action:action); delivery = (id,action)
+        try store.begin(id,action:action); delivery = (id,action); discovery = nil
         do { return try await start("runDelivery",request:["action":action,"record":try store.get(id)]) }
         catch { try store.saveError(id,error); throw error }
     }
@@ -59,7 +68,7 @@ import WebKit
         catch { finish(.failure(error)) }
     }
     private func finish(_ result: Result<Any,Error>) {
-        let done = pending; pending = nil; operation = nil; queued = nil; timer?.cancel(); timer = nil
+        let done = pending; pending = nil; operation = nil; queued = nil; discovery = nil; timer?.cancel(); timer = nil
         done?.resume(with:result)
     }
     func cancel(reason: String = "Crypton request cancelled. Your draft is still here.") {
@@ -83,6 +92,11 @@ import WebKit
             do {
                 let value: Any
                 switch event {
+                case "walletDiscovery":
+                    guard let search = discovery, !discoveryRequested,
+                          data["call"] as? String == search.method, sameJSON(data["args"],search.args) else { throw CryptonError("Unauthorized identity lookup.") }
+                    discoveryRequested = true
+                    value = try RecipientDiscovery.response(await wallet.call(search.method,search.args,raw:true),search.args)
                 case "wallet":
                     guard let method = data["call"] as? String, let args = data["args"] as? JSON,
                           ["createHmac","decrypt"].contains(method), sameJSON(args["protocolID"],[2,"crypton"]), args["keyID"] as? String == "1" else { throw CryptonError("Unsupported engine wallet operation.") }

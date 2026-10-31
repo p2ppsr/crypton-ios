@@ -150,3 +150,72 @@ enum Wire {
         }
     }
 }
+
+struct DiscoveredIdentity: Identifiable, Equatable {
+    let key: String
+    let name: String
+    let certification: String
+    let certifier: String
+    let certificateType: String
+    var id: String { key + ":" + certifier + ":" + certificateType }
+}
+
+/// Discovery is read-only and always uses the connected wallet's trust policy.
+enum RecipientDiscovery {
+    static let methods: Set<String> = ["discoverByAttributes", "discoverByIdentityKey"]
+    static let limit = 20
+    static func text(_ value: Any?, maximum: Int) throws -> String {
+        guard let value = value as? String, value.utf8.count <= maximum,
+              !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) || (0x200B...0x200F).contains($0.value) || (0x202A...0x202E).contains($0.value) || (0x2066...0x2069).contains($0.value) || $0.value == 0xFEFF }) else { throw CryptonError("Invalid identity search text or wallet metadata.") }
+        return value.trimmingCharacters(in:.whitespacesAndNewlines)
+    }
+    static func request(_ input: String) throws -> (method:String,args:JSON) {
+        let query = try text(input,maximum:256)
+        guard query.count >= 2 else { throw CryptonError("Enter at least two characters to search.") }
+        if query.range(of:"^[0-9a-fA-F]{66}$",options:.regularExpression) != nil {
+            return ("discoverByIdentityKey",["identityKey":try Wire.identity(query),"limit":limit,"offset":0,"seekPermission":true])
+        }
+        return ("discoverByAttributes",["attributes":["any":query],"limit":limit,"offset":0,"seekPermission":true])
+    }
+    static func arguments(_ method:String,_ args:JSON) throws -> JSON {
+        guard methods.contains(method), integer(args["limit"]) == limit, integer(args["offset"]) == 0,
+              let seek = args["seekPermission"] as? Bool, seek, integer(args["seekPermission"]) == nil else { throw CryptonError("Invalid identity discovery request.") }
+        let query:String
+        if method == "discoverByIdentityKey" {
+            guard Set(args.keys) == Set(["identityKey","limit","offset","seekPermission"]), let key = args["identityKey"] as? String else { throw CryptonError("Invalid identity key lookup.") }
+            query = try Wire.identity(key)
+        } else {
+            guard Set(args.keys) == Set(["attributes","limit","offset","seekPermission"]), let attributes = args["attributes"] as? JSON, Set(attributes.keys) == Set(["any"]), let value = attributes["any"] as? String else { throw CryptonError("Invalid identity attribute lookup.") }
+            query = value
+        }
+        let expected = try request(query)
+        guard expected.method == method, sameJSON(expected.args,args) else { throw CryptonError("Identity discovery arguments changed.") }
+        return args
+    }
+    static func response(_ value:Any,_ args:JSON) throws -> JSON {
+        guard let value = value as? JSON, value["isError"] as? Bool != true,
+              let total = integer(value["totalCertificates"]), total >= 0,
+              let certificates = value["certificates"] as? [JSON], certificates.count <= limit, total >= certificates.count,
+              try jsonData(value).count <= 1_000_000 else { throw CryptonError("The wallet returned invalid identity search results.") }
+        for certificate in certificates {
+            let subject = try Wire.identity(certificate["subject"] as? String ?? "")
+            _ = try Wire.identity(certificate["certifier"] as? String ?? "")
+            if let expected = args["identityKey"] as? String, subject != expected { throw CryptonError("The wallet returned a different identity.") }
+            guard let info = certificate["certifierInfo"] as? JSON, let trust = integer(info["trust"]), (1...10).contains(trust),
+                  let fields = certificate["decryptedFields"] as? JSON, fields.count <= 100 else { throw CryptonError("The wallet returned incomplete certificate details.") }
+            _ = try text(info["name"],maximum:500)
+            for field in fields.values { _ = try text(field,maximum:4096) }
+        }
+        return value
+    }
+    static func identities(_ value:Any) throws -> [DiscoveredIdentity] {
+        guard let rows = value as? [JSON], rows.count <= limit else { throw CryptonError("Invalid identity search results.") }
+        var seen = Set<String>()
+        return try rows.compactMap { row in
+            let key = try Wire.identity(row["key"] as? String ?? "")
+            let identity = DiscoveredIdentity(key:key,name:try text(row["name"],maximum:4096),certification:try text(row["certification"],maximum:1000),certifier:try Wire.identity(row["certifier"] as? String ?? ""),certificateType:try text(row["certificateType"],maximum:256))
+            guard !identity.name.isEmpty, !identity.certification.isEmpty, !identity.certificateType.isEmpty else { throw CryptonError("Incomplete identity search result.") }
+            return seen.insert(identity.id).inserted ? identity : nil
+        }
+    }
+}

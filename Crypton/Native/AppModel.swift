@@ -5,6 +5,7 @@ import AVFoundation
 struct PublicContact: Codable, Identifiable, Equatable {
     var name: String
     var key: String
+    var walletIdentity: String? = nil
     var id: String { key }
 }
 enum Screen { case home, recipient, compose, result, contacts, settings, guide, outbox, delivery }
@@ -22,6 +23,12 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     @Published var peerName = "Myself"
     @Published var keyDraft = ""
     @Published var contactName = ""
+    @Published var recipientQuery = "" { didSet { if recipientQuery != oldValue { clearSearch() } } }
+    @Published private(set) var searchResults: [DiscoveredIdentity] = []
+    @Published private(set) var searchCompleted = false
+    @Published private(set) var selectedIdentity: DiscoveredIdentity?
+    @Published private(set) var recipientSaved = false
+    private var peerWalletIdentity: String?
     @Published var output = ""
     @Published var outputKind = "message"
     @Published var layerNote = ""
@@ -39,7 +46,7 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     private var engine: CryptoEngine?
     private var task: Task<Void,Never>?
     var portal: PortalWallet? { wallet as? PortalWallet }
-    init(defaults: UserDefaults = .standard, store: DeliveryStore? = nil) {
+    init(defaults: UserDefaults = .standard, store: DeliveryStore? = nil, wallet: WalletConnection? = nil) {
         let defaults = ProcessInfo.processInfo.arguments.contains("--uitesting") ? UserDefaults(suiteName:"crypton.uitests")! : defaults
         if ProcessInfo.processInfo.arguments.contains("--uitesting") { defaults.removePersistentDomain(forName:"crypton.uitests") }
         #if DEBUG
@@ -70,9 +77,11 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
         if let data = defaults.data(forKey:"publicContacts"), let saved = try? JSONDecoder().decode([PublicContact].self,from:data) { contacts = saved }
         sound.enabled = soundEnabled
         configureWallet()
+        if let wallet = wallet { self.wallet = wallet }
         if !defaults.bool(forKey:"guideSeen") && !ProcessInfo.processInfo.arguments.contains("--uitesting") { screen = .guide }
     }
     private func configureWallet() {
+        clearSearch()
         engine?.close(); engine = nil; portal?.close(); wallet?.cancel(); wallet = nil
         status = "Connect your wallet"; portalVisible = false
         if walletMode == "me" {
@@ -122,12 +131,51 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
         }
     }
     func begin(decrypt: Bool) {
+        clearSearch(); recipientQuery = ""
         decrypting = decrypt; keyDraft = peer == "self" ? "" : peer
         screen = decrypt ? .compose : .recipient
     }
     func choose(_ key: String, name: String = "Selected identity") {
-        do { peer = key == "self" ? key : try Wire.identity(key); peerName = name; screen = .compose }
+        do {
+            let key = key == "self" ? key : try Wire.identity(key)
+            peer = key; peerName = name; peerWalletIdentity = nil; selectedIdentity = nil; recipientSaved = false; screen = .compose
+        }
         catch { self.error = error.localizedDescription }
+    }
+    private func clearSearch() { searchResults = []; searchCompleted = false; selectedIdentity = nil; recipientSaved = false }
+    func searchRecipients() {
+        guard !busy else { return }
+        clearSearch()
+        let query = recipientQuery
+        perform { [self] in
+            guard !(wallet is PortalWallet) else { throw CryptonError("Recipient search requires Metanet Explorer or a BRC-100 wallet. Choose one in Settings.") }
+            _ = try RecipientDiscovery.request(query)
+            let results = try await crypto().search(query)
+            try Task.checkCancellation()
+            guard recipientQuery == query else { return }
+            searchResults = results; searchCompleted = true; status = "Wallet connected"
+        }
+    }
+    func chooseDiscovered(_ identity:DiscoveredIdentity) {
+        guard !busy, searchCompleted, searchResults.contains(identity) else { error = "Search again and select a current recipient."; return }
+        choose(identity.key,name:String(identity.name.prefix(120)))
+        peerWalletIdentity = identity.key; selectedIdentity = identity; legacySenderSelected = true
+    }
+    func chooseContact(_ contact:PublicContact) {
+        do {
+            let key = try Wire.identity(contact.key)
+            let walletKey = try contact.walletIdentity.map { try Wire.identity($0) }
+            choose(key,name:contact.name)
+            peerWalletIdentity = walletKey; legacySenderSelected = true
+        } catch { self.error = error.localizedDescription }
+    }
+    func saveDiscoveredRecipient() {
+        guard let identity = selectedIdentity, identity.key == peer, !busy else { return }
+        do {
+            let contact = PublicContact(name:String(identity.name.prefix(120)),key:try Wire.identity(identity.key),walletIdentity:try Wire.identity(identity.key))
+            try persistContacts((contacts.filter { $0.key != contact.key } + [contact]).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })
+            recipientSaved = true
+        } catch { self.error = error.localizedDescription }
     }
     func process() {
         // Raw ciphertext always requires an explicit sender selection, including imported files.
@@ -195,17 +243,17 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     private func persistContacts(_ value: [PublicContact]) throws { defaults.set(try JSONEncoder().encode(value),forKey:"publicContacts"); contacts = value }
     func clearSession() {
         cancel(); engine?.close(); engine = nil; portal?.close(); wallet = nil
-        message = ""; ciphertext = ""; output = ""; layerNote = ""; peer = "self"; peerName = "Myself"; keyDraft = ""; legacySenderSelected = false; screen = .home
+        message = ""; ciphertext = ""; output = ""; layerNote = ""; peer = "self"; peerName = "Myself"; keyDraft = ""; peerWalletIdentity = nil; clearSearch(); recipientQuery = ""; legacySenderSelected = false; screen = .home
         WKWebsiteDataStore.default().removeData(ofTypes:WKWebsiteDataStore.allWebsiteDataTypes(),modifiedSince:.distantPast) { [weak self] in Task { @MainActor in self?.configureWallet() } }
     }
-    func done() { message = ""; ciphertext = ""; output = ""; layerNote = ""; legacySenderSelected = false; screen = .home }
+    func done() { message = ""; ciphertext = ""; output = ""; layerNote = ""; clearSearch(); recipientQuery = ""; legacySenderSelected = false; screen = .home }
     func openInner() { let inner = output; importMessage(inner) }
     func finishGuide() { defaults.set(true,forKey:"guideSeen"); screen = .home }
     func newDelivery() {
         do {
             guard outputKind == "encrypted", Wire.isEnvelope(output) else { throw CryptonError("Create a v2 message before using MessageBox.") }
             let saved = defaults.dictionary(forKey:"deliveryKeys") as? [String:String] ?? [:]
-            let recipient = peer == "self" ? "self" : saved[peer] ?? peer
+            let recipient = peer == "self" ? "self" : peerWalletIdentity ?? saved[peer] ?? peer
             deliveryID = try store.create(envelope:output,key:peer,recipient:recipient,name:peerName)
             deliveryRecipient = recipient == "self" ? "" : recipient; screen = .delivery
         } catch { self.error = error.localizedDescription }
