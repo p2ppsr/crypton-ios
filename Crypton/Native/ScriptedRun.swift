@@ -41,7 +41,16 @@ import CryptoKit
         var progress = ""
         while model.busy {
             if model.activity != progress { progress = model.activity; event("progress",["detail":progress]) }
-            try require(ProcessInfo.processInfo.systemUptime < deadline,"Script phase timed out. Inspect the saved payment; do not repeat Send.")
+            if ProcessInfo.processInfo.systemUptime >= deadline {
+                // Do not leave the engine able to reach payment after the CLI has
+                // stopped recording. Cancellation preserves every payment marker.
+                model.cancel()
+                let settleDeadline = ProcessInfo.processInfo.systemUptime + 2
+                while model.busy && ProcessInfo.processInfo.systemUptime < settleDeadline {
+                    try await Task.sleep(nanoseconds:10_000_000)
+                }
+                throw CryptonError("Script phase timed out and was cancelled. Inspect the saved outcome before retrying.")
+            }
             try await Task.sleep(nanoseconds:50_000_000)
         }
         if let error = model.error { throw CryptonError(error) }

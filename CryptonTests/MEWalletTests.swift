@@ -58,6 +58,30 @@ final class MEWalletTests: XCTestCase {
         XCTAssertTrue(me.returned(URL(string:"crypton-wallet://return/"+capability)!))
         me.resumed(); XCTAssertTrue(me.token.isEmpty)
     }
+    @MainActor func testLostCommandResponseIsRetrievableOnlyByItsOriginalPage() async throws {
+        let opened = expectation(description:"Wallet opened")
+        let me = MEWallet(open:{ _ in opened.fulfill(); return true },foreground:{false},backgroundTime:false)
+        defer { me.cancel() }
+        me.beginOperation()
+        let job = Task { try await me.call("isAuthenticated",[:]) }
+        await fulfillment(of:[opened],timeout:5)
+        let owner = UUID().uuidString, other = UUID().uuidString
+        func next(_ page:String?) throws -> JSON {
+            var headers = ["host":String(me.origin.dropFirst("http://".count))]
+            headers["x-crypton-page"] = page
+            return try object(me.serve(LoopbackRequest(method:"GET",path:"/"+me.token+"/next",headers:headers,body:Data())).body)
+        }
+        let lost = try XCTUnwrap(try next(owner)["command"] as? JSON)
+        let retry = try XCTUnwrap(try next(owner)["command"] as? JSON)
+        XCTAssertEqual(lost["id"] as? String,retry["id"] as? String,"An aborted HTTP response must not lose the command")
+        XCTAssertTrue(try next(other)["command"] is NSNull,"A reload/second tab cannot re-invoke an issued command")
+        XCTAssertTrue(try next(nil)["command"] is NSNull,"Legacy pages cannot steal the claim")
+        let headers = ["host":String(me.origin.dropFirst("http://".count)),"origin":me.origin,"content-type":"application/json"]
+        let result:JSON = ["id":retry["id"]!,"type":"CWI","isInvocation":false,"status":"success","result":["authenticated":true]]
+        let ack = me.serve(LoopbackRequest(method:"POST",path:"/"+me.token+"/result",headers:headers,body:try jsonData(result)))
+        XCTAssertEqual(ack.status,200); ack.sent?(); _ = try await job.value
+        XCTAssertTrue(try next(owner)["command"] is NSNull,"A completed command cannot be recovered as a new invocation")
+    }
     @MainActor func testBobWalletUsesSeparateSchemeWithoutOfficialFallback() async throws {
         let opened = expectation(description:"Bob wallet opened"); var link:URL?
         let wallet = MEWallet(open:{ link = $0; opened.fulfill(); return true },foreground:{false},backgroundTime:false,scheme:"metanet-bob")

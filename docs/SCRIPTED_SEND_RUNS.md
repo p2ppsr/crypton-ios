@@ -72,3 +72,16 @@ To reproduce the complete unpaid failure on the disposable simulator (expected e
 ```sh
 CRYPTON_FIXTURE_TIMEOUT_QUOTES=2 ./scripts/send-message.py 'Retained encrypted quote timeout test' --fixture --sdk-root /tmp/crypton-ux251-fixtures
 ```
+
+
+## 2.5.7: recover a lost command response without returning early
+
+Run `216530e5-b51c-4b43-9a00-f1b9e5eac5c2`, composed **2026-11-01 23:25:50 UTC**, stalled before authentication and fee lookup. Crypton started `createHmac` at **23:26:12.413 UTC**, but the scoped ME snapshot contained no HMAC dispatch. ME had just recorded a local fetch failure after 4,018 ms and a bridge return-status response. The controller stopped at **23:30:58.932 UTC** while the native request remained pending until **23:31:16.078 UTC**. Its subsequently settled journal was DRAFT with all payment markers absent. Only the controller classification was corrected; no payment or native journal was reset.
+
+The bridge had two reproduced flaws: an idle `/next` fetch error requested an automatic app return while another command could be queued, and native `/next` consumed a command before its HTTP response was received. A lost response could therefore strand an invocation. The existing diagnostics do not establish the exact command-offer/visibility order in that production incident.
+
+Each page now has a random owner ID. Native retrieval reserves the command to that page and permits that same page to retrieve the same UUID after a lost response. Reloaded/other pages cannot retrieve an issued command, and the page's UUID set still permits only one wallet invocation. Idle read errors reconnect on the existing ME page instead of switching apps. An in-progress recovery return pauses retrieval/dispatch until ME becomes visible again. Payment result saves remain idempotent, and payment/submission retries remain protected.
+
+A scripted phase timeout now cancels its native engine/wallet task and waits briefly for settlement before emitting its failure record. A settled DRAFT can provide affirmative unpaid proof; pending or payment-marked operations remain protected. Cancellation cannot prove that an already-dispatched wallet payment failed. New fixed `bridge.command.<method>.queued/offered/recovered`, `bridge.result.<method>.saved` and bridge-return stages appear in the existing pipeline capture without capabilities, arguments, identities or amounts.
+
+Validation: five JavaScript bridge regressions and four recorded native/SDK tests passed, including lost-command ownership, lost result acknowledgements, sequential calls and a complete disposable send. A full recorded CLI run with two stalled quotes and `--timeout 30` canceled and settled as `failed_before_payment`, with its MP4 finalized. Release 2.5.7 (16) builds successfully. The investigation's brief video gap after the original controller timeout is recorded in the private evidence notes; it is not claimed as uninterrupted capture. Fresh production success with the installed ME wallet remains unverified.

@@ -21,6 +21,7 @@ import CryptoKit
     private var closeTimer: Task<Void,Never>?
     var progress: ((String) -> Void)?
     private var generation = UUID()
+    private var sessionBegan = ProcessInfo.processInfo.systemUptime
     private(set) var token = ""
     private(set) var origin = ""
     private var id = ""
@@ -28,6 +29,7 @@ import CryptoKit
     private var raw = false
     private var command: JSON?
     private var issued = false
+    private var commandPageID:String?
     private var response: Result<Any,Error>?
     // A lost HTTP acknowledgement must not turn a saved response into a stale
     // UUID error when the engine has already queued its next wallet method.
@@ -73,7 +75,7 @@ import CryptoKit
         if session, server != nil, !sessionFinished {
             return try await request(method,params,raw:raw,openPage:foreground() || reopenAfterRecovery)
         }
-        let run = UUID(); generation = run; starting = true
+        let run = UUID(); generation = run; sessionBegan = ProcessInfo.processInfo.systemUptime; starting = true
         let server = LoopbackServer(); self.server = server
         keepAlive()
 
@@ -94,6 +96,10 @@ import CryptoKit
             throw error
         }
     }
+    private func trace(_ stage:String) {
+        // Random operation UUID and fixed stages only; no capability, key or args.
+        NSLog("Crypton pipeline %@ bridge.%@ %.1fms",generation.uuidString,stage,(ProcessInfo.processInfo.systemUptime-sessionBegan)*1000)
+    }
     private func keepAlive() {
         guard backgroundTime, background == .invalid else { return }
         background = UIApplication.shared.beginBackgroundTask(withName:"Crypton wallet handoff") { [weak self] in
@@ -104,13 +110,13 @@ import CryptoKit
     private func request(_ method:String,_ params:JSON,raw:Bool,openPage:Bool) async throws -> Any {
         if openPage { keepAlive(); reopenAfterRecovery = false }
         id = UUID().uuidString; self.method = method; self.raw = raw; response = nil
-        command = ["type":"CWI","isInvocation":true,"id":id,"call":method,"args":params]; issued = false
+        command = ["type":"CWI","isInvocation":true,"id":id,"call":method,"args":params]; issued = false; commandPageID = nil
         let run = generation
         let target = URL(string:origin + "/" + token + "/")!
         let link = try Self.handoffURL(target,scheme:scheme,pairing:NativeWalletPairing.proof(target))
         progress?(method == "createAction" ? "Review the total and approve payment in ME" : "ME: " + Self.label(method))
         return try await withCheckedThrowingContinuation { done in
-            continuation = done; waiting?(true)
+            continuation = done; waiting?(true); trace("command." + method + ".queued")
             // A human payment review has no silent deadline while ME still
             // offers Pay. Explicit cancellation retains PAYMENT_REQUESTED.
             if method != "createAction" {
@@ -143,6 +149,7 @@ import CryptoKit
     @discardableResult func returned(_ url:URL) -> Bool {
         guard url.scheme == "crypton-wallet", url.host == "return", url.path == "/"+token,
               !token.isEmpty, url.query == nil, url.fragment == nil, url.user == nil, url.password == nil, url.port == nil else { return false }
+        trace(session && !sessionFinished ? "returned.unfinished" : "returned.finished")
         if session && !sessionFinished { reopenAfterRecovery = true }
         if foreground() { resumed() }; return true
     }
@@ -206,10 +213,14 @@ import CryptoKit
                 guard let url = Bundle.main.url(forResource:"me",withExtension:"js",subdirectory:"Engine") else { return LoopbackResponse(status:500) }
                 return LoopbackResponse(type:"application/javascript",body:try Data(contentsOf:url))
             case ("GET","next"):
-                // At most one page can obtain each command. A reload or a second
-                // tab must never re-invoke createAction after an uncertain result.
-                let next = response == nil && !issued ? command : nil
-                if next != nil { issued = true }
+                // A lost GET response must be recoverable by its original page.
+                // A reload/second page has a new nonce and cannot obtain the same
+                // invocation. The owning page deduplicates dispatch by command UUID.
+                let page = request.headers["x-crypton-page"]
+                if let page = page, UUID(uuidString:page) == nil { return LoopbackResponse(status:403) }
+                let samePage = page != nil && page == commandPageID
+                let next = response == nil && (!issued || samePage) ? command : nil
+                if next != nil { trace("command." + method + (issued ? ".recovered" : ".offered")); issued = true; commandPageID = page }
                 return LoopbackResponse(body:try jsonData(["finished":session ? sessionFinished : response != nil,"session":session,"issued":issued,"command":next as Any? ?? NSNull()]))
             case ("POST","result"):
                 guard request.headers["origin"] == origin, request.headers["content-type"] == "application/json" else { return LoopbackResponse(status:403) }
@@ -234,6 +245,7 @@ import CryptoKit
                 }
                 // A session resumes the engine only after the HTTP reply has been sent.
                 // Further commands use this same ME page; no app switch or prompt dismissal.
+                trace("result." + method + ".saved")
                 savedResults[resultID] = digest; savedResultOrder.append(resultID)
                 if savedResultOrder.count > 128 { savedResults.removeValue(forKey:savedResultOrder.removeFirst()) }
                 #if DEBUG

@@ -23,6 +23,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     if(message.type==='CRYPTON_RETURN') {returns.push(message);void listeners.message({source:sandbox,data:{type:'CRYPTON_RETURN_STATUS',accepted:true}});}
     else invocations.push(message);
   }};
+  sandbox.crypto=require('node:crypto').webcrypto;
   vm.createContext(sandbox);
   const deliver=async id=>{
     const event={source:null,data:{id,type:'CWI',isInvocation:false,status:'success',result:{network:'mainnet'}}};
@@ -56,6 +57,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   }};
   sandbox.window=sandbox;sandbox.addEventListener=(name,fn)=>{events[name]=fn};
   sandbox.ReactNativeWebView={postMessage:text=>{const m=JSON.parse(text);(m.type==='CRYPTON_RETURN'?returns:invocations).push(m)}};
+  sandbox.crypto=require('node:crypto').webcrypto;
   vm.createContext(sandbox);
   try {
     vm.runInContext(fs.readFileSync('Crypton/Engine/me.js','utf8'),sandbox);
@@ -75,7 +77,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const timers=new Set(), events={}, invocations=[], returns=[];
   let saves=0, reads=0, saved=false, finished=false;
   const status={textContent:''}, link={href:'crypton-wallet://return/lost-ack',hidden:true,addEventListener:()=>{}};
-  const doc={hidden:false,getElementById:id=>id==='status'?status:link};
+  const doc={hidden:false,addEventListener:(name,fn)=>{events[name]=fn},getElementById:id=>id==='status'?status:link};
   const sandbox={AbortController,clearTimeout,document:doc,location:{href:''},setTimeout:(fn,ms)=>{const t=setTimeout(fn,ms);timers.add(t);return t},fetch:async path=>{
     if(path==='result') {
       saves++;
@@ -95,6 +97,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       void events.message({source:null,data:{type:'CRYPTON_RETURN_STATUS',accepted:true}});
     } else invocations.push(m);
   }};
+  sandbox.crypto=require('node:crypto').webcrypto;
   vm.createContext(sandbox);
   const deliver=async id=>events.message({source:null,data:{id,type:'CWI',isInvocation:false,status:'success',result:{network:'mainnet'}}});
   try {
@@ -105,7 +108,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(invocations.length,1,'A hidden recovery page cannot dispatch the next wallet request');
     assert.equal(returns.length,1);
     const hiddenReads=reads;await pause(180);assert.equal(reads,hiddenReads);
-    doc.hidden=false;await pause(180); // Native Crypton reopens ME for the queued request.
+    doc.hidden=false;events.visibilitychange();await pause(180); // Native Crypton reopens ME for the queued request.
     assert.equal(invocations.length,2);assert.equal(invocations[1].id,'second');
     await deliver('second');await pause(180);
     assert.equal(saves,3);assert.equal(returns.length,2);
@@ -118,7 +121,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const timers=new Set(), events={}, invocations=[], bodies=[];
   let click, online=false, saved=false, posts=0;
   const status={textContent:''}, link={href:'crypton-wallet://return/retained-result',hidden:true,addEventListener:(name,fn)=>{if(name==='click')click=fn}};
-  const sandbox={AbortController,clearTimeout,document:{hidden:false,getElementById:id=>id==='status'?status:link},location:{href:''},
+  const sandbox={AbortController,clearTimeout,document:{hidden:false,addEventListener:(name,fn)=>{events[name]=fn},getElementById:id=>id==='status'?status:link},location:{href:''},
     setTimeout:(fn,ms)=>{const t=setTimeout(fn,Math.min(ms,8));timers.add(t);return t},
     fetch:async(path,options)=>{
       if(path==='result') { posts++;bodies.push(options.body);if(!online)throw Error('Crypton suspended');saved=true;return {ok:true} }
@@ -131,6 +134,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     if(value.type==='CRYPTON_RETURN')void events.message({source:null,data:{type:'CRYPTON_RETURN_STATUS',accepted:online}});
     else invocations.push(value);
   }};
+  sandbox.crypto=require('node:crypto').webcrypto;
   vm.createContext(sandbox);
   try {
     vm.runInContext(fs.readFileSync('Crypton/Engine/me.js','utf8'),sandbox);
@@ -138,11 +142,44 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await events.message({source:null,data:{id:'retained-payment',type:'CWI',isInvocation:false,status:'error',code:1,description:'Payment review expired',executionStatus:'not-committed'}});
     assert.equal(posts,8);assert.match(status.textContent,/retained on this page/);assert.equal(link.hidden,false);
     await pause(40);assert.equal(posts,8,'Retries must remain bounded while the prompt blocks return');
-    online=true;click({preventDefault(){}});await pause(70);
+    online=true;click({preventDefault(){}});await pause(20);
+    // Returning for a result save must pause dispatch until ME becomes visible again.
+    sandbox.document.hidden=true; sandbox.document.hidden=false; events.visibilitychange();await pause(70);
     assert(saved,'Manual return after bounded retries must save the retained terminal result');
     assert.equal(invocations.length,1,'Never replay createAction to recover an old result');
     assert(bodies.every(body=>body===bodies[0]),'Only the identical completed response may be retried');
     assert.equal(status.textContent,'Operation finished. Returning to Crypton…');
     console.log('ME page: terminal result retained after exhausted retries; manual return saves it without another wallet call.');
+  } finally {for(const t of timers)clearTimeout(t)}
+})().catch(error=>{console.error(error);process.exitCode=1});
+
+
+(async () => {
+  const timers=new Set(), events={}, calls=[], returns=[], owners=[];
+  let reads=0, saved=false;
+  const status={textContent:''}, link={href:'crypton-wallet://return/lost-command',hidden:true,addEventListener:()=>{}};
+  const sandbox={AbortController,clearTimeout,crypto:require('node:crypto').webcrypto,
+    document:{hidden:false,getElementById:id=>id==='status'?status:link},
+    setTimeout:(fn,ms)=>{const t=setTimeout(fn,Math.min(ms,10));timers.add(t);return t},
+    fetch:async(path,options)=>{
+      if(path==='result'){saved=true;return {ok:true}}
+      reads++;owners.push(options.headers['X-Crypton-Page']);
+      if(reads===1)throw Error('Response lost after native command claim');
+      return {ok:true,json:async()=>({finished:saved,command:saved?null:{id:'same-command',call:'createAction',type:'CWI',isInvocation:true,args:{}}})};
+    }
+  };
+  sandbox.window=sandbox;sandbox.addEventListener=(name,fn)=>{events[name]=fn};
+  sandbox.ReactNativeWebView={postMessage:text=>{const m=JSON.parse(text);(m.type==='CRYPTON_RETURN'?returns:calls).push(m)}};
+  vm.createContext(sandbox);
+  try {
+    vm.runInContext(fs.readFileSync('Crypton/Engine/me.js','utf8'),sandbox);
+    await pause(60);
+    assert.equal(reads,2);assert.equal(new Set(owners).size,1,'Lost responses must retain their page owner');
+    assert.equal(returns.length,0,'An idle read failure must not switch apps before dispatch');
+    assert.equal(calls.length,1);assert.equal(calls[0].id,'same-command');
+    await events.message({source:null,data:{id:'same-command',type:'CWI',isInvocation:false,status:'success',result:{}}});
+    await pause(30);assert.equal(calls.length,1,'Recovering a command cannot invoke it twice');
+    assert.equal(returns.length,1);
+    console.log('ME page: lost command response recovers on the owning page, with no early return or duplicate payment invocation.');
   } finally {for(const t of timers)clearTimeout(t)}
 })().catch(error=>{console.error(error);process.exitCode=1});

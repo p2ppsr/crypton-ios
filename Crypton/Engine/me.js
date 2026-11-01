@@ -3,6 +3,7 @@ const statusText = document.getElementById('status'), returnLink = document.getE
 const sent = new Set(), received = new Set();
 const allowed = new Set(['isAuthenticated','waitForAuthentication','getPublicKey','getNetwork','encrypt','decrypt','createHmac','verifyHmac','createSignature','verifySignature','createAction','listActions','discoverByAttributes','discoverByIdentityKey']);
 let current = null, stopped = false, returning = false, saving = false, returnAttempts = 0, pendingResponse = null;
+const pageID = crypto.randomUUID();
 const visible = () => !document.hidden;
 function returnToApp() {
   if (!visible() || (current && !saving && !pendingResponse) || returning || returnAttempts >= 8) return;
@@ -15,6 +16,7 @@ function returnToApp() {
 }
 document.addEventListener?.('visibilitychange', () => {
   if (!visible()) return;
+  returning=false; returnAttempts=0;
   if (pendingResponse && !saving) { returning=false; returnAttempts=0; void saveResponse(); }
   else if (stopped && !returning && !returnLink.hidden) returnToApp();
 });
@@ -77,11 +79,11 @@ const labels = {
 };
 async function poll() {
   if (stopped) return;
-  // A command is issued once by the native server. Do not fetch the next one
-  // until the current result is acknowledged, or it could be consumed and lost.
-  if (current || saving || !visible()) { setTimeout(poll,150); return; }
+  // The native server reserves each command for its owning page. Dispatch it
+  // once and await the result acknowledgement before retrieving another command.
+  if (current || saving || returning || !visible()) { setTimeout(poll,150); return; }
   try {
-    const response = await boundedFetch('next',{cache:'no-store'});
+    const response = await boundedFetch('next',{cache:'no-store',headers:{'X-Crypton-Page':pageID}});
     if (!response.ok) throw Error();
     const {command,finished} = await response.json();
     returnLink.hidden = !(finished && !current);
@@ -96,7 +98,7 @@ async function poll() {
         sent.add(command.id); current=command.id;
         const invoke = () => {
           if (stopped || current !== command.id) return;
-          if (!visible()) { setTimeout(invoke,150); return; }
+          if (returning || !visible()) { setTimeout(invoke,150); return; }
           returning=false; returnAttempts=0;
           window.ReactNativeWebView.postMessage(JSON.stringify(command));
         };
@@ -104,8 +106,9 @@ async function poll() {
       }
     }
   } catch {
-    // Never foreground Crypton while a wallet invocation/prompt is outstanding.
-    if (!current) { statusText.textContent='Return to Crypton to resume this saved operation.'; returnToApp(); }
+    // A failed idle read may already have claimed the next command. Stay here
+    // and retrieve it with the SAME page identity; a return races wallet dispatch.
+    if (!current) statusText.textContent='Reconnecting to Crypton’s local wallet bridge…';
   }
   if (!stopped) setTimeout(poll,150);
 }
