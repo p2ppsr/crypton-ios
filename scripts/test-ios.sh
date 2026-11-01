@@ -69,8 +69,7 @@ if [ -n "${CRYPTON_SDK_ROOT:-}" ]; then
   sleep 1
   if ! kill -0 "$CRYPTON_FIXTURE_PID" 2>/dev/null; then cat "$CRYPTON_LOG"; exit 1; fi
 fi
-CRYPTON_RESULT_ARGS=()
-if [ -n "${CRYPTON_RESULT_BUNDLE:-}" ]; then CRYPTON_RESULT_ARGS=(-resultBundlePath "$CRYPTON_RESULT_BUNDLE"); fi
+CRYPTON_RESULT_ARGS=(-resultBundlePath "${CRYPTON_RESULT_BUNDLE:-$CRYPTON_RUN_DIRECTORY/Tests.xcresult}")
 xcodebuild -project Crypton.xcodeproj -scheme Crypton \
   -destination "platform=iOS Simulator,id=$CRYPTON_DEVICE_ID" \
   -derivedDataPath "${CRYPTON_DERIVED_DATA:-/tmp/crypton-ios-derived}" \

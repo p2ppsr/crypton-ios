@@ -9,6 +9,7 @@ import CryptoKit
     private let open: @MainActor (URL) async -> Bool
     private let foreground: @MainActor () -> Bool
     private let backgroundTime: Bool
+    private let requestTimeoutNanoseconds: UInt64
     private var server: LoopbackServer?
     private var continuation: CheckedContinuation<Any,Error>?
     private var timer: Task<Void,Never>?
@@ -28,12 +29,18 @@ import CryptoKit
     private var command: JSON?
     private var issued = false
     private var response: Result<Any,Error>?
+    // A lost HTTP acknowledgement must not turn a saved response into a stale
+    // UUID error when the engine has already queued its next wallet method.
+    private var savedResults: [String:Data] = [:]
+    private var savedResultOrder: [String] = []
+    private var reopenAfterRecovery = false
     var waiting: ((Bool) -> Void)?
     private let scheme:String
     init(open: @escaping @MainActor (URL) async -> Bool = { await UIApplication.shared.open($0) },
          foreground: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active },
-         backgroundTime: Bool = true, scheme:String = "metanet") {
+         backgroundTime: Bool = true, scheme:String = "metanet", requestTimeoutNanoseconds:UInt64 = 300_000_000_000) {
         self.open = open; self.foreground = foreground; self.backgroundTime = backgroundTime; self.scheme = scheme
+        self.requestTimeoutNanoseconds = requestTimeoutNanoseconds
     }
     static func handoffURL(_ target:URL,scheme:String = "metanet",pairing:[URLQueryItem] = []) throws -> URL {
         guard ["metanet","metanet-bob"].contains(scheme) else { throw CryptonError("Unsupported ME wallet application.") }
@@ -64,7 +71,7 @@ import CryptoKit
         let params = RecipientDiscovery.methods.contains(method) ? try RecipientDiscovery.arguments(method,args) : raw ? args : try Wire.walletArguments(method,args)
         guard try jsonData(params).count <= 500_000 else { throw CryptonError("ME request is too large.") }
         if session, server != nil, !sessionFinished {
-            return try await request(method,params,raw:raw,openPage:foreground())
+            return try await request(method,params,raw:raw,openPage:foreground() || reopenAfterRecovery)
         }
         let run = UUID(); generation = run; starting = true
         let server = LoopbackServer(); self.server = server
@@ -95,7 +102,7 @@ import CryptoKit
         }
     }
     private func request(_ method:String,_ params:JSON,raw:Bool,openPage:Bool) async throws -> Any {
-        if openPage { keepAlive() }
+        if openPage { keepAlive(); reopenAfterRecovery = false }
         id = UUID().uuidString; self.method = method; self.raw = raw; response = nil
         command = ["type":"CWI","isInvocation":true,"id":id,"call":method,"args":params]; issued = false
         let run = generation
@@ -104,9 +111,13 @@ import CryptoKit
         progress?(method == "createAction" ? "Review the total and approve payment in ME" : "ME: " + Self.label(method))
         return try await withCheckedThrowingContinuation { done in
             continuation = done; waiting?(true)
-            timer = Task { [weak self] in
-                do { try await Task.sleep(nanoseconds:300_000_000_000) } catch { return }
-                self?.fail(CryptonError("ME approval did not finish within five minutes. Your draft and any payment recovery record are saved."))
+            // A human payment review has no silent deadline while ME still
+            // offers Pay. Explicit cancellation retains PAYMENT_REQUESTED.
+            if method != "createAction" {
+                timer = Task { [weak self] in
+                    do { try await Task.sleep(nanoseconds:self?.requestTimeoutNanoseconds ?? 300_000_000_000) } catch { return }
+                    self?.fail(CryptonError("ME approval did not finish within five minutes. Your draft and any payment recovery record are saved."))
+                }
             }
             if openPage {
                 Task { [weak self] in
@@ -132,11 +143,30 @@ import CryptoKit
     @discardableResult func returned(_ url:URL) -> Bool {
         guard url.scheme == "crypton-wallet", url.host == "return", url.path == "/"+token,
               !token.isEmpty, url.query == nil, url.fragment == nil, url.user == nil, url.password == nil, url.port == nil else { return false }
+        if session && !sessionFinished { reopenAfterRecovery = true }
         if foreground() { resumed() }; return true
     }
     func resumed() {
         if sessionFinished { closeSession() }
-        else if let response = response { finish(response) }
+        else if server != nil {
+            // A long wallet review can exhaust the previous iOS background
+            // allowance. Renew it before handing the unfinished session back.
+            if background != .invalid { UIApplication.shared.endBackgroundTask(background); background = .invalid }
+            keepAlive()
+            if !session, let response = response { finish(response) }
+            else if reopenAfterRecovery, continuation != nil, response == nil, !issued {
+                // The next command may have been queued during the app's
+                // inactive -> active transition, before foreground() was true.
+                reopenAfterRecovery = false
+                let run = generation
+                Task { [weak self] in
+                    guard let self = self, self.generation == run,
+                          let target = URL(string:self.origin + "/" + self.token + "/"),
+                          let link = try? Self.handoffURL(target,scheme:self.scheme,pairing:NativeWalletPairing.proof(target)) else { return }
+                    if !(await self.open(link)), self.generation == run { self.fail(CryptonError("Open Metanet Explorer to resume the saved operation.")) }
+                }
+            }
+        }
     }
     func cancel() { fail(CryptonError("Wallet request cancelled. Your draft and any payment recovery record are saved.")); closeSession() }
     private func fail(_ error:Error) { finish(.failure(error)) }
@@ -149,6 +179,7 @@ import CryptoKit
     private func closeSession() {
         generation = UUID(); starting = false; session = false; sessionFinished = false; operationDepth = 0
         command = nil; response = nil; token = ""; origin = ""; id = ""
+        savedResults.removeAll(); savedResultOrder.removeAll(); reopenAfterRecovery = false
         closeTimer?.cancel(); closeTimer = nil; timer?.cancel(); timer = nil
         server?.stop(); server = nil
         if background != .invalid { UIApplication.shared.endBackgroundTask(background); background = .invalid }
@@ -181,9 +212,16 @@ import CryptoKit
                 if next != nil { issued = true }
                 return LoopbackResponse(body:try jsonData(["finished":session ? sessionFinished : response != nil,"session":session,"issued":issued,"command":next as Any? ?? NSNull()]))
             case ("POST","result"):
-                guard request.headers["origin"] == origin, request.headers["content-type"] == "application/json", continuation != nil else { return LoopbackResponse(status:403) }
+                guard request.headers["origin"] == origin, request.headers["content-type"] == "application/json" else { return LoopbackResponse(status:403) }
                 let value = try object(request.body)
-                guard response == nil, value["id"] as? String == id, value["type"] as? String == "CWI", value["isInvocation"] as? Bool == false, integer(value["isInvocation"]) == nil else { return LoopbackResponse(status:409) }
+                guard let resultID = value["id"] as? String, value["type"] as? String == "CWI", value["isInvocation"] as? Bool == false, integer(value["isInvocation"]) == nil else { return LoopbackResponse(status:409) }
+                let digest = Data(SHA256.hash(data:try jsonData(value)))
+                if let saved = savedResults[resultID] {
+                    guard saved == digest else { return LoopbackResponse(status:409) }
+                    return acknowledgement(resultID)
+                }
+                guard continuation != nil else { return LoopbackResponse(status:403) }
+                guard response == nil, resultID == id else { return LoopbackResponse(status:409) }
                 if value["status"] as? String == "success", let result = value["result"] as? JSON {
                     do {
                         if RecipientDiscovery.methods.contains(method), let args = command?["args"] as? JSON { response = .success(try RecipientDiscovery.response(result,args)) }
@@ -196,15 +234,26 @@ import CryptoKit
                 }
                 // A session resumes the engine only after the HTTP reply has been sent.
                 // Further commands use this same ME page; no app switch or prompt dismissal.
-                var reply = LoopbackResponse()
+                savedResults[resultID] = digest; savedResultOrder.append(resultID)
+                if savedResultOrder.count > 128 { savedResults.removeValue(forKey:savedResultOrder.removeFirst()) }
                 #if DEBUG
                 NSLog("Crypton ME response received: %@",method)
                 #endif
-                reply.sent = { [weak self] in Task { @MainActor in if let self = self, self.session || self.foreground() { if let response = self.response { self.finish(response) } } } }
-                return reply
+                return acknowledgement(resultID)
             default: return LoopbackResponse(status:403)
             }
         } catch { return LoopbackResponse(status:400) }
+    }
+    private func acknowledgement(_ resultID:String) -> LoopbackResponse {
+        var reply = LoopbackResponse()
+        reply.sent = { [weak self] in Task { @MainActor in
+            // A delayed acknowledgment of an earlier method cannot finish a
+            // later request or resume its continuation with the wrong result.
+            guard let self = self, self.id == resultID,
+                  self.session || self.foreground(), let response = self.response else { return }
+            self.finish(response)
+        } }
+        return reply
     }
 }
 

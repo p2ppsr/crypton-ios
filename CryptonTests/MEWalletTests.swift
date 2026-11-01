@@ -48,7 +48,9 @@ final class MEWalletTests: XCTestCase {
         await fulfillment(of:[second],timeout:5)
         let secondCommand = try XCTUnwrap(try next()["command"] as? JSON)
         XCTAssertNotEqual(firstCommand["id"] as? String,secondCommand["id"] as? String)
-        XCTAssertEqual(try respond(firstCommand).status,409,"Old response cannot satisfy the next method")
+        let retry = try respond(firstCommand)
+        XCTAssertEqual(retry.status,200,"An identical saved result is acknowledged after a lost reply")
+        retry.sent?() // Must not satisfy the second method's continuation.
         let secondResponse = try respond(secondCommand); secondResponse.sent?()
         _ = try await following.value
         XCTAssertEqual(launches,1)
@@ -98,7 +100,7 @@ final class MEWalletTests: XCTestCase {
         let (_,numeric) = try await BoundedHTTP().fetch(request); XCTAssertEqual(numeric.statusCode,409)
         request.httpBody = try jsonData(body)
         let (_,accepted) = try await BoundedHTTP().fetch(request); XCTAssertEqual(accepted.statusCode,200)
-        let (_,duplicate) = try await BoundedHTTP().fetch(request); XCTAssertEqual(duplicate.statusCode,409)
+        let (_,duplicate) = try await BoundedHTTP().fetch(request); XCTAssertEqual(duplicate.statusCode,200)
         XCTAssertFalse(me.token.isEmpty,"Response must wait for foreground return")
         XCTAssertFalse(me.returned(URL(string:"crypton-wallet://return/stale")!))
         let capability = me.token
@@ -131,6 +133,67 @@ final class MEWalletTests: XCTestCase {
         XCTAssertEqual(me.serve(LoopbackRequest(method:"POST",path:"/"+me.token+"/result",headers:postHeaders,body:try jsonData(body))).status,200)
         me.resumed()
         let result = try await job.value; XCTAssertEqual(result as? Bool,true)
+    }
+    @MainActor func testLostAcknowledgementReturnsForSaveThenReopensMEForNextMethod() async throws {
+        let firstOpen = expectation(description:"Initial wallet page"), recoveryOpen = expectation(description:"Resume wallet after saving result")
+        var launches = 0, foreground = false, completed = false
+        let me = MEWallet(open:{ _ in
+            launches += 1
+            if launches == 1 { firstOpen.fulfill() } else { recoveryOpen.fulfill() }
+            return true
+        },foreground:{foreground},backgroundTime:false)
+        defer { me.cancel() }
+        me.beginOperation()
+        let first = Task { let value = try await me.call("isAuthenticated",[:]); completed = true; return value }
+        await fulfillment(of:[firstOpen],timeout:5)
+        let token = me.token, origin = me.origin
+        let headers = ["host":String(origin.dropFirst("http://".count))]
+        func next() throws -> JSON { try object(me.serve(LoopbackRequest(method:"GET",path:"/"+token+"/next",headers:headers,body:Data())).body) }
+        func post(_ value:JSON, originOverride:String? = nil) throws -> LoopbackResponse {
+            var h = headers; h["origin"] = originOverride ?? origin; h["content-type"] = "application/json"
+            return me.serve(LoopbackRequest(method:"POST",path:"/"+token+"/result",headers:h,body:try jsonData(value)))
+        }
+        let command = try XCTUnwrap(try next()["command"] as? JSON)
+        let body:JSON = ["type":"CWI","isInvocation":false,"id":command["id"]!,"status":"success","result":["authenticated":true]]
+        let lost = try post(body); XCTAssertEqual(lost.status,200) // HTTP acknowledgement lost before .sent.
+        foreground = true
+        XCTAssertTrue(me.returned(URL(string:"crypton-wallet://return/"+token)!)); me.resumed()
+        await Task.yield(); XCTAssertFalse(completed,"Returning for recovery must wait for the page's save acknowledgement")
+        let retry = try post(body); XCTAssertEqual(retry.status,200); retry.sent?()
+        _ = try await first.value
+        foreground = false // Simulates the inactive/active handoff race.
+        let following = Task { try await me.call("isAuthenticated",[:]) }
+        await fulfillment(of:[recoveryOpen],timeout:5)
+        let second = try XCTUnwrap(try next()["command"] as? JSON)
+        XCTAssertNotEqual(second["id"] as? String,command["id"] as? String)
+        lost.sent?(); (try post(body)).sent?() // Late callbacks cannot finish the second method.
+        var changed = body; changed["result"] = ["authenticated":false]
+        XCTAssertEqual(try post(changed).status,409,"Same UUID with different content is not an acknowledgement retry")
+        XCTAssertEqual(try post(body,originOverride:"https://evil.example").status,403)
+        var secondBody = body; secondBody["id"] = second["id"]
+        let final = try post(secondBody); XCTAssertEqual(final.status,200); final.sent?()
+        let result = try await following.value; XCTAssertEqual(result as? Bool,true)
+        XCTAssertEqual(launches,2,"Recovery must reopen ME even before Crypton becomes active")
+        me.endOperation()
+    }
+    @MainActor func testPaymentReviewWaitsForUserWhileOrdinaryRequestsRemainBounded() async throws {
+        let opened = expectation(description:"Payment review opened")
+        var finished = false
+        let me = MEWallet(open:{ _ in opened.fulfill(); return true },foreground:{false},backgroundTime:false,requestTimeoutNanoseconds:100_000_000)
+        let payment = Task {
+            defer { finished = true }
+            return try await me.call("createAction",[:],raw:true)
+        }
+        await fulfillment(of:[opened],timeout:5)
+        try await Task.sleep(nanoseconds:350_000_000)
+        XCTAssertFalse(finished,"Crypton must not silently expire a still-open payment review")
+        XCTAssertFalse(me.token.isEmpty)
+        me.cancel()
+        do { _ = try await payment.value; XCTFail("Canceled payment review returned success") } catch { }
+        let bounded = MEWallet(open:{ _ in true },foreground:{false},backgroundTime:false,requestTimeoutNanoseconds:100_000_000)
+        do { _ = try await bounded.call("isAuthenticated",[:]); XCTFail("Non-payment wallet requests must retain their timeout") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("did not finish")) }
+        bounded.cancel()
     }
     @MainActor func testSharedStoreCrossInstanceValidationAndImageImport() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

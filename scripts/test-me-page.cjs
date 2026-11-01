@@ -70,3 +70,46 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     console.log('ME page: hidden-page dispatch, completed result save, stopped polling and no unsafe URL fallback passed.');
   } finally { for(const timer of timers)clearTimeout(timer) }
 })().catch(error=>{console.error(error);process.exitCode=1});
+
+(async () => {
+  const timers=new Set(), events={}, invocations=[], returns=[];
+  let saves=0, reads=0, saved=false, finished=false;
+  const status={textContent:''}, link={href:'crypton-wallet://return/lost-ack',hidden:true,addEventListener:()=>{}};
+  const doc={hidden:false,getElementById:id=>id==='status'?status:link};
+  const sandbox={AbortController,clearTimeout,document:doc,location:{href:''},setTimeout:(fn,ms)=>{const t=setTimeout(fn,ms);timers.add(t);return t},fetch:async path=>{
+    if(path==='result') {
+      saves++;
+      if(saves===1){saved=true;throw Error('HTTP response lost after native save')}
+      assert.equal(saved,true);
+      if(saves===3)finished=true;
+      return {ok:true}; // Native idempotent acknowledgement of the same response.
+    }
+    reads++;return {ok:true,json:async()=>({session:true,finished,command:finished?null:{id:saved?'second':'first',call:'getNetwork',type:'CWI',isInvocation:true,args:{}}})};
+  }};
+  sandbox.window=sandbox;sandbox.addEventListener=(name,fn)=>{events[name]=fn};
+  sandbox.ReactNativeWebView={postMessage:text=>{
+    const m=JSON.parse(text);
+    if(m.type==='CRYPTON_RETURN') {
+      returns.push(m);
+      if(!finished)doc.hidden=true; // Crypton foregrounds to restore its listener.
+      void events.message({source:null,data:{type:'CRYPTON_RETURN_STATUS',accepted:true}});
+    } else invocations.push(m);
+  }};
+  vm.createContext(sandbox);
+  const deliver=async id=>events.message({source:null,data:{id,type:'CWI',isInvocation:false,status:'success',result:{network:'mainnet'}}});
+  try {
+    vm.runInContext(fs.readFileSync('Crypton/Engine/me.js','utf8'),sandbox);
+    await pause(30);assert.equal(invocations.length,1);
+    await deliver('first');await pause(180);
+    assert.equal(saves,2,'A lost HTTP reply retries the same result');
+    assert.equal(invocations.length,1,'A hidden recovery page cannot dispatch the next wallet request');
+    assert.equal(returns.length,1);
+    const hiddenReads=reads;await pause(180);assert.equal(reads,hiddenReads);
+    doc.hidden=false;await pause(180); // Native Crypton reopens ME for the queued request.
+    assert.equal(invocations.length,2);assert.equal(invocations[1].id,'second');
+    await deliver('second');await pause(180);
+    assert.equal(saves,3);assert.equal(returns.length,2);
+    assert.equal(status.textContent,'Operation finished. Returning to Crypton…');
+    console.log('ME page: lost HTTP acknowledgement, same-result retry, hidden recovery and next-command continuation passed.');
+  } finally {for(const timer of timers)clearTimeout(timer)}
+})().catch(error=>{console.error(error);process.exitCode=1});

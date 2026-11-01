@@ -75,11 +75,16 @@ import WebKit
         return try await withCheckedThrowingContinuation { continuation in
             (wallet as? MEWallet)?.beginOperation()
             pending = continuation; queued = (function, request)
-            timer = Task { [weak self] in
-                do { try await Task.sleep(nanoseconds:900_000_000_000) } catch { return }
-                self?.cancel(reason:"Crypton timed out. Your draft and saved delivery record are still here.")
-            }
+            armTimeout(id)
             dispatch()
+        }
+    }
+    private func armTimeout(_ id:String) {
+        timer?.cancel()
+        timer = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds:900_000_000_000) } catch { return }
+            guard let self = self, self.operation == id else { return }
+            self.cancel(reason:"Crypton timed out. Your draft and saved delivery record are still here.")
         }
     }
     private func dispatch() {
@@ -142,6 +147,9 @@ import WebKit
                     NSLog("Crypton delivery wallet: %@",method)
                     #endif
                     try store.beforeWallet(session.id,action:session.action,method:method,args:args)
+                    let reviewingPayment = method == "createAction" && wallet is MEWallet
+                    if reviewingPayment { timer?.cancel(); timer = nil }
+                    defer { if reviewingPayment, operation == token { armTimeout(token) } }
                     do { value = try await wallet.call(method,args,raw:true) }
                     catch {
                         if method == "createAction", let refusal = error as? WalletRefusal, refusal.notCommitted { try store.walletRefused(session.id,refusal:refusal) }
