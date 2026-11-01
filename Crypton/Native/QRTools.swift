@@ -22,11 +22,11 @@ struct MessageEditor: UIViewRepresentable {
         view.autocorrectionType = .no; view.autocapitalizationType = .none
         view.smartQuotesType = .no; view.smartDashesType = .no; view.smartInsertDeleteType = .no
         view.accessibilityIdentifier = label; view.accessibilityLabel = label
-        if label != "messageEditor" {
+        do {
             context.coordinator.editor = view
             let toolbar = UIToolbar(frame:CGRect(x:0,y:0,width:320,height:44))
             let done = UIBarButtonItem(barButtonSystemItem:.done,target:context.coordinator,action:#selector(Coordinator.finishEditing))
-            done.accessibilityIdentifier = "keyInputDone"; done.accessibilityLabel = "Done entering key"
+            done.accessibilityIdentifier = label == "messageEditor" ? "messageInputDone" : "keyInputDone"; done.accessibilityLabel = label == "messageEditor" ? "Done entering message" : "Done entering key"
             toolbar.items = [UIBarButtonItem.flexibleSpace(),done]; view.inputAccessoryView = toolbar
         }
         return view

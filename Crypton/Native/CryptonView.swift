@@ -276,7 +276,7 @@ struct CryptonView: View {
         VStack(alignment:.leading,spacing:18) {
             title("Settings.")
             Text("WALLET CONNECTION").font(.caption).foregroundStyle(mint)
-            Picker("Wallet connection",selection:$model.walletMode) { Text("Metanet Explorer").tag("me"); Text("ME (Bob)").tag("me-bob"); Text("Original portal").tag("portal"); Text("BRC-100 JSON").tag("json") }.pickerStyle(.menu)
+            Picker("Wallet connection",selection:$model.walletMode) { Text("Metanet Explorer").tag("me"); Text("ME (Bob)").tag("me-bob"); Text("Original portal").tag("portal"); Text("BRC-100 JSON").tag("json") }.pickerStyle(.menu).accessibilityIdentifier("walletConnection")
             if model.walletMode == "json" {
                 textField("https://wallet.example",$model.endpoint)
                 Text("Use an unlocked BRC-100 wallet with a JSON API. Requests identify this app as https://crypton.ios.").font(.footnote).foregroundStyle(.secondary)
@@ -288,13 +288,13 @@ struct CryptonView: View {
                 }
             } else { Text(PortalWallet.origin).font(.footnote).textSelection(.enabled) }
             action("Save wallet connection","checkmark",primary:true) { model.saveWallet() }
-            Toggle("Legacy iPhone message format",isOn:$model.legacy).tint(mint)
+            Toggle("Legacy iPhone message format",isOn:$model.legacy).tint(mint).accessibilityIdentifier("legacyMessages")
             Text(model.legacy ? "Raw base64 · wallet identity · explicit sender selection" : "Crypton v2 · app-only receiving identity · sender included").font(.footnote).foregroundStyle(.secondary)
             if !model.legacy && model.walletMode == "portal" { Text("V2 identities require a BRC-100 wallet. The original portal supports legacy messages.").font(.footnote).foregroundStyle(.orange) }
             Toggle("Music and sound effects",isOn:$model.soundEnabled).tint(mint)
             Text("DISAPPEARING MESSAGES").font(.caption).foregroundStyle(mint)
-            Toggle("Sent: remove after confirmed delivery",isOn:$model.disappearSend).tint(mint)
-            Toggle("Received: decrypt once and remove",isOn:$model.disappearReceive).tint(mint)
+            Toggle("Sent: remove after confirmed delivery",isOn:$model.disappearSend).tint(mint).accessibilityIdentifier("disappearSent")
+            Toggle("Received: decrypt once and remove",isOn:$model.disappearReceive).tint(mint).accessibilityIdentifier("disappearReceived")
             Text("Both default to Keep copies. Sent mode applies to new MessageBox deliveries and keeps uncertain payments recoverable. Received mode applies to inbox decryption: it removes the local ciphertext, automatically acknowledges the server message and verifies removal. Recipient fees are not collected; receive a wanted fee in ME first.").font(.footnote).foregroundStyle(.secondary)
             Text("Private views hide in app previews and during screen recording. iOS cannot prevent screenshots. Wallet records, server backups and copies in other apps are outside this setting.").font(.footnote).foregroundStyle(.secondary)
             action("Open wallet","wallet.pass") { model.connect(showPortal:true) }
@@ -356,7 +356,7 @@ struct CryptonView: View {
             } else if state == "SENT" {
                 Label("Accepted by MessageBox",systemImage:"checkmark.circle").foregroundStyle(mint)
                 Text("Acceptance confirms server delivery, not that the recipient has opened your message.").font(.footnote).foregroundStyle(.secondary)
-                if let receipt = r["receipt"] as? JSON { selectable(receipt["messageId"] as? String ?? "") }
+                if let receipt = r["receipt"] as? JSON { selectable(receipt["messageId"] as? String ?? "").accessibilityIdentifier("deliveryMessageID") }
             } else if state == "PAYMENT_REQUESTED" {
                 Text("The payment outcome is uncertain. Check the wallet history. A second payment is blocked.").foregroundStyle(.orange)
                 action("Check wallet history","clock") { model.deliver("recover") }

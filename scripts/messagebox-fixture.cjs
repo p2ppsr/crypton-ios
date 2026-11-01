@@ -10,6 +10,9 @@ app.use(createAuthMiddleware({wallet:serverWallet,allowUnauthenticated:false}));
 app.get('/permissions/quote',(req,res)=>{deliveryFixture.quotes++;res.json({status:'success',quote:{deliveryFee:deliveryFixture.changedFee||(deliveryFixture.changeFeeAtQuote&&deliveryFixture.quotes>=deliveryFixture.changeFeeAtQuote)?11:10,recipientFee:10}});});
 app.post('/listMessages',(req,res)=>{
  deliveryFixture.inboxLists++;
+ // Optional test-only lag: an accepted message is absent from the first N reads.
+ const deferred=Number(process.env.CRYPTON_FIXTURE_DEFER_INBOX_LISTS||0);
+ if(Number.isSafeInteger(deferred)&&deferred>0&&deferred<=3&&deliveryFixture.inboxLists<=deferred)return res.json({status:'success',messages:[],hasMore:false});
  const {messageBox,offset,limit,messageId}=req.body;
  if(messageBox!=='notifications'||!Number.isInteger(offset)||offset<0||limit!==25)return res.status(400).json({status:'error'});
  const rows=[...deliveryFixture.inboxRows,...Array.from(accepted.values()).map(r=>({...r.message,sender:senders.get(r.message.messageId)}))]

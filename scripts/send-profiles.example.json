@@ -1,0 +1,14 @@
+{
+  "primary": {
+    "name": "Primary iOS",
+    "device": "REPLACE_WITH_PRIMARY_SIMULATOR_UUID",
+    "receivingKey": "REPLACE_WITH_PRIMARY_CRYPTON_RECEIVING_KEY",
+    "walletIdentity": "REPLACE_WITH_PRIMARY_ME_WALLET_IDENTITY"
+  },
+  "peer": {
+    "name": "Peer iOS",
+    "device": "REPLACE_WITH_PEER_SIMULATOR_UUID",
+    "receivingKey": "REPLACE_WITH_PEER_CRYPTON_RECEIVING_KEY",
+    "walletIdentity": "REPLACE_WITH_PEER_ME_WALLET_IDENTITY"
+  }
+}
