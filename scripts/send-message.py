@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 import uuid
+from urllib.parse import urlsplit, parse_qs
 
 REPO = Path(__file__).resolve().parents[1]
 ARTIFACTS = REPO / '.recordings'
@@ -79,6 +80,23 @@ def configure_test(template, destination, plan):
     destination.write_bytes(plistlib.dumps(data))
 
 
+def native_status(path, after, kind):
+    if kind not in ['runInbox','runDelivery']: raise ValueError('Unsupported operation kind')
+    operations = {}
+    if not path.exists(): return 'waiting'
+    for line in path.read_text().splitlines():
+        try:
+            item = json.loads(line)
+            at = datetime.fromisoformat(item['timestamp']).timestamp()
+            match = re.fullmatch(r'Crypton pipeline ([A-Fa-f0-9-]+) ([A-Za-z0-9_./-]+) [0-9.]+ms',item['eventMessage'])
+        except (ValueError,KeyError,TypeError): continue
+        if not match or at < after: continue
+        operation, stage = match.groups()
+        if stage == 'start.'+kind: operations[operation] = 'waiting'
+        elif operation in operations and stage in ['complete','failed']: operations[operation] = stage
+    return next(reversed(operations.values())) if operations else 'waiting'
+
+
 class Run:
     def __init__(self, args, profiles):
         self.args, self.profiles = args, profiles
@@ -88,13 +106,27 @@ class Run:
                      'message': args.text + '\n\nComposed: ' + now + '\nRun: ' + run_id}
         if len(self.plan['message'].encode('utf-16-le')) // 2 > 16000:
             raise ValueError('Message including run timestamp must fit 16,000 UTF-16 units')
+        original = getattr(args,'verify_run',None)
+        if original:
+            saved = json.loads((original/'request.json').read_text())
+            result = json.loads((original/'result.json').read_text())
+            if saved['run_id'] != result['run_id'] or hashlib.sha256(saved['message'].encode()).hexdigest() != result['text_sha256']:
+                raise ValueError('Original run identity/text hash does not match')
+            if saved.get('fixture') or (result['sender'],result['receiver']) != (profiles[0]['device'],profiles[1]['device']):
+                raise ValueError('Verification profiles do not match the original production run')
+            self.plan = {k:v for k,v in saved.items() if k not in ['claim_url','claim_token','watch_url','watch_token']}
+            self.plan['timeout'] = args.timeout
         self.events, self.recorders, self.logs = [], [], []
         self.state_lock = threading.RLock()
         self.claim_server = None
         self.process = None
+        self.review_prompted = False
         self.state = {'status': 'preparing', 'started_at': now, 'run_id': self.plan['run_id'], 'fixture': args.fixture,
                       'sender': profiles[0]['device'], 'receiver': profiles[1]['device'],
                       'text_sha256': hashlib.sha256(self.plan['message'].encode()).hexdigest(), 'folder': str(self.folder)}
+        if original:
+            self.state.update(status='verifying',mode='verify_only',original_run=str(original.resolve()),message_id=args.message_id,
+                              run_id=self.plan['run_id'],text_sha256=hashlib.sha256(self.plan['message'].encode()).hexdigest())
         write(self.folder / 'request.json', self.plan)
         self.save()
 
@@ -104,10 +136,11 @@ class Run:
     def start_claim_server(self):
         owner = self
         token = secrets.token_urlsafe(32)
+        may_send = not getattr(getattr(self,'args',None),'verify_run',None)
         class Claim(BaseHTTPRequestHandler):
             def log_message(self, *_args): pass
             def do_POST(self):
-                valid = (self.path == '/claim' and self.headers.get('X-Crypton-Run') == owner.plan['run_id']
+                valid = (may_send and self.path == '/claim' and self.headers.get('X-Crypton-Run') == owner.plan['run_id']
                          and hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + token)
                          and self.headers.get('Content-Length', '0') == '0')
                 status = 403
@@ -121,13 +154,28 @@ class Run:
                             owner.state['status'] = 'sending'; owner.save(); status = 200
                         except FileExistsError: status = 409
                 self.send_response(status); self.send_header('Content-Length', '0'); self.end_headers()
+            def do_GET(self):
+                url = urlsplit(self.path); params = parse_qs(url.query)
+                valid = (url.path == '/watch' and self.headers.get('X-Crypton-Run') == owner.plan['run_id']
+                         and hmac.compare_digest(self.headers.get('Authorization',''),'Bearer '+token))
+                try:
+                    device = params['device'][0]; kind = params['kind'][0]; after = float(params['after'][0])
+                    if device not in [p['device'] for p in owner.profiles] or not re.fullmatch(r'[a-fA-F0-9-]{36}',device): raise ValueError('Unknown simulator')
+                    result = native_status(owner.folder/(device+'.pipeline.jsonl'),after,kind) if valid else 'denied'
+                except (ValueError,KeyError): valid = False; result = 'denied'
+                body = json.dumps({'status':result}).encode()
+                self.send_response(200 if valid else 403); self.send_header('Content-Type','application/json')
+                self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
         self.claim_server = ThreadingHTTPServer(('127.0.0.1', 0), Claim)
-        self.plan.update(claim_url='http://127.0.0.1:' + str(self.claim_server.server_port) + '/claim', claim_token=token)
+        base = 'http://127.0.0.1:' + str(self.claim_server.server_port)
+        self.plan.update(watch_url=base+'/watch',watch_token=token)
+        if may_send: self.plan.update(claim_url=base+'/claim',claim_token=token)
         write(self.folder / 'request.json', self.plan)
         threading.Thread(target=self.claim_server.serve_forever, daemon=True).start()
 
     def start_capture(self):
-        for device in dict.fromkeys(p['device'] for p in self.profiles):
+        active = self.profiles[1:] if getattr(self.args,'verify_run',None) else self.profiles
+        for device in dict.fromkeys(p['device'] for p in active):
             ready = self.folder / (device + '.ready.json')
             log = (self.folder / (device + '.recorder.log')).open('w')
             process = subprocess.Popen([sys.executable, str(REPO / 'scripts/record-ios-run.py'), '--device', device,
@@ -150,22 +198,26 @@ class Run:
         self.events.append(e)
         with (self.folder / 'events.jsonl').open('a') as f: f.write(json.dumps(e) + '\n')
         stage = e['stage']
-        print(e['utc'], e['role'], stage, e.get('label', ''), flush=True)
+        print(e['utc'], e['role'], stage, e.get('label', e.get('detail','')), flush=True)
         if stage == 'failed' and e.get('send_attempted') is False and e.get('role') == 'send' and not (self.folder / 'send-claimed').exists():
             self.state['status'] = 'failed'
         if stage == 'send_tapped':
             self.state['status'] = 'sending'
-        if stage == 'pay_visible':
-            # Bring the exact simulator window forward; never interact with Pay.
-            command(['open', '-a', str(Path(os.environ['DEVELOPER_DIR'])/'Applications/Simulator.app') if 'DEVELOPER_DIR' in os.environ else 'Simulator', '--args', '-CurrentDeviceUDID', self.profiles[0]['device']])
-            print('HUMAN ACTION (' + self.profiles[0].get('name', self.profiles[0]['device']) + '): review and click Pay once in ME. Leave Allow up to unchanged.\n'
-                  'Composed: ' + self.plan['composed_at'] + '; run: ' + self.plan['run_id'], flush=True)
+        if stage == 'pay_visible' or (stage == 'progress' and 'approve payment' in e.get('detail','').lower()):
+            if not getattr(self,'review_prompted',False):
+                self.review_prompted = True
+                command(['open','-a',str(Path(os.environ['DEVELOPER_DIR'])/'Applications/Simulator.app') if 'DEVELOPER_DIR' in os.environ else 'Simulator','--args','-CurrentDeviceUDID',self.profiles[0]['device']])
+                print('HUMAN ACTION ('+self.profiles[0].get('name',self.profiles[0]['device'])+'): review the final total and click Pay once in ME. Leave Allow up to unchanged.\n'
+                      'Composed: '+self.plan['composed_at']+'; run: '+self.plan['run_id'],flush=True)
         if stage == 'accepted': self.state.update(status='accepted', message_id=e['message_id'])
         if stage == 'retained': self.state['status'] = 'complete'
         self.save()
 
-    def phase(self, template, role, profile):
-        plan = {**self.plan, 'role': role, 'recipient_name': self.profiles[1].get('name', 'Peer iOS'),
+    # Historical UI executor, retained for regression tests only. The CLI uses phase() below.
+    def phase_xctest(self, template, role, profile):
+        if getattr(self.args,'verify_run',None) and role != 'receive':
+            raise RuntimeError('Verification mode cannot enter a sending phase')
+        plan = {**self.plan, 'role': role, 'device':profile['device'], 'recipient_name': self.profiles[1].get('name', 'Peer iOS'),
                 'receiving_key': self.profiles[1].get('receivingKey', ''), 'wallet_identity': self.profiles[1].get('walletIdentity', ''),
                 'message_id': self.state.get('message_id', '')}
         spec = self.folder / (role + '.xctestrun')
@@ -196,6 +248,62 @@ class Run:
         expected = {'send': 'accepted', 'receive': 'retained', 'preflight': 'preflight_complete'}[role]
         if not any(e['role'] == role and e['stage'] == expected for e in self.events):
             raise RuntimeError('UI test ended without the required ' + expected + ' evidence')
+
+    def phase(self, template, role, profile):
+        if getattr(self.args,'verify_run',None) and role != 'receive':
+            raise RuntimeError('Verification mode cannot enter a sending phase')
+        root = Path(subprocess.check_output(['xcrun','simctl','get_app_container',profile['device'],APP,'data'],text=True).strip())
+        folder = root/'Library/Application Support/ScriptedRuns'/self.plan['run_id']
+        folder.mkdir(parents=True,exist_ok=True,mode=0o700)
+        events_path = folder/'events.jsonl'; events_path.write_text('')
+        plan = {**self.plan,'role':role,'device':profile['device'],'mode':self.state.get('mode','send'),
+                'recipient_name':self.profiles[1].get('name','Peer iOS'),'receiving_key':self.profiles[1].get('receivingKey',''),
+                'wallet_identity':self.profiles[1].get('walletIdentity',''),'message_id':self.state.get('message_id','')}
+        write(folder/'request.json',plan)
+        if role == 'send':self.state['status']='sending';self.save()
+        launch = ['launch','--terminate-running-process',profile['device'],APP]
+        if self.args.fixture:launch += ['--uitesting','--sdk-wallet-fixture','--messagebox-fixture']
+        launch += ['--crypton-script',self.plan['run_id']]
+        offset = 0; pay_seen = False; deadline = time.monotonic()+self.args.timeout+30
+        try:
+            sim(*launch,stdout=subprocess.DEVNULL)
+            while time.monotonic()<deadline:
+                with events_path.open() as f:
+                    f.seek(offset)
+                    while True:
+                        position = f.tell();line = f.readline()
+                        if not line or not line.endswith('\n'):f.seek(position);break
+                        event = json.loads(line)
+                        self.event(event)
+                        if event['stage']=='failed':raise RuntimeError(event.get('reason','Native script failed'))
+                        if event['stage']=='phase_complete':
+                            expected={'preflight':'preflight_complete','send':'accepted','receive':'retained'}[role]
+                            if not any(e['role']==role and e['stage']==expected for e in self.events):raise RuntimeError('Missing '+expected+' evidence')
+                            return
+                    offset=f.tell()
+                if role=='send' and not self.args.fixture and not pay_seen:
+                    pay_seen=self.observe_payment(profile)
+                time.sleep(.1)
+            raise RuntimeError(role+' exceeded its native phase deadline; inspect the saved outcome')
+        finally:
+            (folder/'request.json').unlink(missing_ok=True)
+            (folder/'request.tmp').unlink(missing_ok=True)
+
+    def observe_payment(self, profile):
+        try:
+            root=Path(subprocess.check_output(['xcrun','simctl','get_app_container',profile['device'],'app.metanet.explorer','data'],text=True).strip())/'Library/Application Support/app.metanet.explorer/RCTAsyncLocalStorage_V1'
+            key='metanet.diagnostics.events.v1'; manifest=json.loads((root/'manifest.json').read_text());raw=manifest.get(key)
+            if raw is None:raw=(root/hashlib.md5(key.encode()).hexdigest()).read_text()
+            data=json.loads(raw)
+            visible=next((e for e in data if e.get('at','')>=self.state['started_at'] and e.get('name')=='wallet_permission_spending_modal_visible' and 'crypton' in e.get('params',{}).get('originator','').lower()),None)
+            if visible:
+                started=next(e for e in self.events if e['role']=='send' and e['stage']=='started')
+                elapsed=(datetime.fromisoformat(visible['at'])-datetime.fromisoformat(started['utc'])).total_seconds()*1000
+                self.event({'run_id':self.plan['run_id'],'role':'send','stage':'pay_visible','utc':visible['at'],'elapsed_ms':elapsed,
+                            'label':'Pay '+str(visible['params']['spending_amount'])+' sats','source':'ME spending-modal diagnostic'})
+                return True
+        except (OSError,ValueError,KeyError,StopIteration,subprocess.CalledProcessError):pass
+        return False
 
     def finish(self):
         if self.claim_server:
@@ -261,7 +369,9 @@ class Run:
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('text', help='Message text; the script appends UTC composition time and a unique run marker')
+    p.add_argument('text', nargs='?', default='', help='Message text; the script appends UTC composition time and a unique run marker')
+    p.add_argument('--verify-run',type=Path,help='Verify/decrypt an existing paid run on its receiver only; never sends or pays')
+    p.add_argument('--message-id',help='Exact known MessageBox ID for --verify-run')
     p.add_argument('--config', type=Path, default=ARTIFACTS / 'send-profiles.json')
     p.add_argument('--reverse', action='store_true', help='Send peer -> primary')
     p.add_argument('--fixture', action='store_true', help='Disposable self-send on Crypton-iOS-Test only; no live wallets or spending')
@@ -269,7 +379,8 @@ def main():
     p.add_argument('--timeout', type=int, default=300, help='Maximum seconds per UI phase; never overrides ME review expiry')
     p.add_argument('--dry-run', action='store_true', help='Validate profiles and print plan without UI or wallet actions')
     a = p.parse_args()
-    if not a.text.strip() or not 30 <= a.timeout <= 900: p.error('Nonempty text and a timeout from 30 to 900 seconds are required')
+    if (not a.verify_run and not a.text.strip()) or not 30 <= a.timeout <= 900: p.error('Nonempty text and a timeout from 30 to 900 seconds are required')
+    if a.verify_run and (a.text or a.fixture or not re.fullmatch(r'[a-f0-9]{64}',a.message_id or '')): p.error('--verify-run requires --message-id and excludes new text/fixtures')
     os.umask(0o077); ARTIFACTS.mkdir(exist_ok=True)
     if 'DEVELOPER_DIR' not in os.environ:
         preferred = Path('/Applications/Xcode-26.6.app/Contents/Developer')
@@ -288,6 +399,9 @@ def main():
     else:
         config = json.loads(a.config.read_text()); profiles = [config['primary'], config['peer']]
         if a.reverse: profiles.reverse()
+        if a.verify_run:
+            old = json.loads((a.verify_run/'result.json').read_text())
+            if profiles[0]['device'] == old['receiver']: profiles.reverse()
         if profiles[0]['device'] == profiles[1]['device']: p.error('Production sender and receiver must be different simulators')
         for profile in profiles:
             for k in ['receivingKey', 'walletIdentity']:
@@ -300,22 +414,23 @@ def main():
     # A past ambiguous send is not permission for another payment.
     for result in ARTIFACTS.glob('*_UTC-send-*/result.json'):
         old = json.loads(result.read_text())
-        if not a.fixture and not old.get('fixture') and old.get('sender') == profiles[0]['device'] and old.get('status') in ['sending', 'needs_recovery']:
+        if not a.verify_run and not a.fixture and not old.get('fixture') and old.get('sender') == profiles[0]['device'] and old.get('status') in ['sending', 'needs_recovery']:
             p.error('Resolve the saved payment outcome before another run: ' + str(result.parent))
     run, server, server_log = Run(a, profiles), None, None
     try:
         build = ARTIFACTS / ('send-run-fixture-build' if a.fixture else 'send-run-release-build')
         with (run.folder / 'build.log').open('w') as log:
-            command(['xcodebuild', '-project', str(REPO / 'Crypton.xcodeproj'), '-scheme', 'CryptonSendRun', '-configuration', 'Debug' if a.fixture else 'Release',
+            command(['xcodebuild', '-project', str(REPO / 'Crypton.xcodeproj'), '-scheme', 'Crypton', '-configuration', 'Debug' if a.fixture else 'Release',
                      '-destination', 'generic/platform=iOS Simulator', '-derivedDataPath', str(build), 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES', 'CODE_SIGN_IDENTITY=-',
-                     'build-for-testing'], stdout=log, stderr=subprocess.STDOUT)
-        templates = list((build / 'Build/Products').glob('*.xctestrun'))
-        if len(templates) != 1: raise RuntimeError('Expected exactly one built UI test manifest')
+                     'build'], stdout=log, stderr=subprocess.STDOUT)
+        templates = [None]
         products = build / 'Build/Products' / ('Debug-iphonesimulator' if a.fixture else 'Release-iphonesimulator')
-        for device in dict.fromkeys(p['device'] for p in profiles):
+        active_profiles = profiles[1:] if a.verify_run else profiles
+        for device in dict.fromkeys(p['device'] for p in active_profiles):
             if available[device]['state'] != 'Booted': sim('boot', device)
             sim('bootstatus', device, '-b', stdout=subprocess.DEVNULL)
-        run.start_capture(); run.start_claim_server()
+        run.start_capture()
+        run.start_claim_server()
         if a.fixture:
             server_log = (run.folder / 'fixture.log').open('w')
             server = subprocess.Popen(['node', str(REPO / 'scripts/messagebox-fixture.cjs'), str(a.sdk_root)], cwd=REPO, stdout=server_log, stderr=subprocess.STDOUT)
@@ -324,12 +439,13 @@ def main():
             while 'MessageBox fixture ready' not in (run.folder / 'fixture.log').read_text():
                 if server.poll() is not None or time.monotonic()>deadline: raise RuntimeError('Disposable fixture failed to start')
                 time.sleep(.1)
-        for device in dict.fromkeys(p['device'] for p in profiles):
+        for device in dict.fromkeys(p['device'] for p in active_profiles):
             if not a.fixture: sim('get_app_container', device, 'app.metanet.explorer', 'app', stdout=subprocess.DEVNULL)
             sim('install', device, str(products / 'Crypton.app'))
-            sim('install', device, str(products / 'CryptonUITests-Runner.app'))
-        run.phase(templates[0], 'preflight', profiles[1])
-        run.phase(templates[0], 'send', profiles[0])
+
+        if not a.verify_run:
+            run.phase(templates[0], 'preflight', profiles[1])
+            run.phase(templates[0], 'send', profiles[0])
         run.phase(templates[0], 'receive', profiles[1])
     except (Exception, KeyboardInterrupt) as e:
         run.state['error'] = str(e) or 'Interrupted'
@@ -343,6 +459,11 @@ def main():
             except subprocess.TimeoutExpired: server.kill()
             server_log.close()
         run.finish()
+    if a.verify_run and run.state['status'] == 'complete':
+        original_path = a.verify_run/'result.json'; original = json.loads(original_path.read_text())
+        original.update(previous_status=original['status'],status='recipient_verified',message_id=a.message_id,
+                        recipient_verification=str(run.folder),sender_receipt='unconfirmed')
+        write(original_path,original)
     return 0 if run.state['status'] == 'complete' else 1
 
 

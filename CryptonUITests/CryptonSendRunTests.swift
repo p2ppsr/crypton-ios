@@ -61,11 +61,70 @@ final class CryptonSendRunTests: XCTestCase {
             if done.exists && done.isHittable { done.tap(); break }
         }
     }
-    private func waitForOutcome(_ condition:()->Bool) throws {
+    private func snapshotButton(_ application:XCUIApplication,_ identifier:String) -> XCUIElementSnapshot? {
+        guard let candidate = application.buttons.matching(identifier:identifier).allElementsBoundByAccessibilityElement.first else { return nil }
+        return try? candidate.snapshot()
+    }
+    private func findSnapshot(_ root:XCUIElementSnapshot,identifier:String? = nil,label:String? = nil) -> XCUIElementSnapshot? {
+        if (identifier == nil || root.identifier == identifier) && (label == nil || root.label == label) { return root }
+        for child in root.children { if let match = findSnapshot(child,identifier:identifier,label:label) { return match } }
+        return nil
+    }
+    private func readyInboxSnapshot() -> XCUIElementSnapshot? {
+        guard let snapshot = try? app.snapshot(),
+              findSnapshot(snapshot,identifier:"walletStatus")?.label == "Inbox up to date",
+              findSnapshot(snapshot,label:"Refresh inbox")?.isEnabled == true else { return nil }
+        return snapshot
+    }
+    private func paymentLabel(in application:XCUIApplication,alreadySeen:Bool) -> String? {
+        // Check the latch before touching ME. After Pay, its control disappears.
+        guard !alreadySeen, application.state == .runningForeground,
+              let snapshot = snapshotButton(application,"p0-spending-spend"), snapshot.isEnabled,
+              snapshot.label.hasPrefix("Pay ") else { return nil }
+        return snapshot.label
+    }
+    @MainActor func testPaymentObservationSurvivesControlDisappearance() throws {
+        app.launchArguments = ["--uitesting"]; app.launch()
+        let before = try XCTUnwrap(snapshotButton(app,"New message"))
+        app.buttons["New message"].tap()
+        XCTAssertEqual(before.label,"New message","A captured snapshot remains safe after the control disappears")
+        XCTAssertNil(snapshotButton(app,"New message"))
+        // Querying an uninstalled application would fail the test. The latch
+        // must return before making even a state query after Pay was observed.
+        let gone = XCUIApplication(bundleIdentifier:"invalid.crypton.absent-wallet-probe")
+        XCTAssertNil(paymentLabel(in:gone,alreadySeen:true))
+    }
+    private func nativeStatus(after:Double,kind:String) -> String {
+        guard let address = plan["watch_url"] as? String, var url = URLComponents(string:address),
+              let token = plan["watch_token"] as? String else { return "waiting" }
+        url.queryItems = [URLQueryItem(name:"after",value:String(after)),URLQueryItem(name:"kind",value:kind),URLQueryItem(name:"device",value:plan["device"] as? String)]
+        var request = URLRequest(url:url.url!); request.timeoutInterval = 2
+        request.setValue("Bearer " + token,forHTTPHeaderField:"Authorization")
+        request.setValue(plan["run_id"] as? String,forHTTPHeaderField:"X-Crypton-Run")
+        let semaphore = DispatchSemaphore(value:0); var result = "waiting"
+        URLSession.shared.dataTask(with:request) { data,response,_ in
+            if (response as? HTTPURLResponse)?.statusCode == 200, let data = data,
+               let object = try? JSONSerialization.jsonObject(with:data) as? [String:String] { result = object["status"] ?? "waiting" }
+            semaphore.signal()
+        }.resume()
+        _ = semaphore.wait(timeout:.now()+3); return result
+    }
+    private func nativeWalletReturn(after:Double,kind:String) throws {
+        if fixture { return }
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let state = nativeStatus(after:after,kind:kind)
+            if state == "complete" { app.activate(); event("wallet_returned"); return }
+            try require(state != "failed","The native operation failed; inspect the saved outcome")
+            Thread.sleep(forTimeInterval:0.2)
+        }
+        try require(false,"The native operation did not complete within the verification deadline")
+    }
+    private func waitForOutcome(checkAlerts:Bool = true,_ condition:()->Bool) throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date()<deadline {
             if condition() { return }
-            if app.state == .runningForeground && app.alerts.firstMatch.exists {
+            if checkAlerts && app.alerts.firstMatch.exists {
                 event("app_error",["detail":app.alerts.firstMatch.label])
                 throw NSError(domain:"CryptonSendRun",code:2,userInfo:[NSLocalizedDescriptionKey:"Crypton displayed an error; inspect the saved recording and recovery record"])
             }
@@ -116,18 +175,25 @@ final class CryptonSendRunTests: XCTestCase {
             let fd = open(marker.path,O_WRONLY | O_CREAT | O_EXCL,0o600)
             try require(fd >= 0,"This run's send marker already exists; replay is blocked")
             close(fd); sendAttempted = true
+            let sendAfter = Date().timeIntervalSince1970
             event("send_tapped"); send.tap()
-            var sawPay = false
-            try waitForOutcome {
-                if me.state == .runningForeground {
-                    let pay = me.buttons["p0-spending-spend"]
-                    if pay.exists && pay.isEnabled && pay.label.hasPrefix("Pay ") && !sawPay {
-                        sawPay = true; self.event("pay_visible",["label":pay.label])
-                        // Human-only final payment action. No Pay/Allow selector is ever tapped.
+            var sawPay = false, returned = fixture, nativeFailed = false
+            try waitForOutcome(checkAlerts:fixture) {
+                if !returned {
+                    if me.state == .runningForeground {
+                        if let label = paymentLabel(in:me,alreadySeen:sawPay) {
+                            sawPay = true; self.event("pay_visible",["label":label])
+                        }
+                    }
+                    let terminal = self.nativeStatus(after:sendAfter,kind:"runDelivery")
+                    if terminal == "failed" { nativeFailed = true; return true }
+                    if terminal == "complete" {
+                        self.app.activate(); returned = true; self.event("wallet_returned")
                     }
                 }
-                return self.app.state == .runningForeground && self.app.staticTexts["Accepted by MessageBox"].exists
+                return returned && self.app.staticTexts["Accepted by MessageBox"].exists
             }
+            try require(!nativeFailed,"Native delivery failed; inspect the saved payment before retrying")
             let id = app.staticTexts["deliveryMessageID"].label
             try require(id.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil,"Acceptance has no valid message ID")
             event("accepted",["message_id":id]); return
@@ -135,29 +201,37 @@ final class CryptonSendRunTests: XCTestCase {
         try require(role == "receive","Unknown automation phase")
         let id = plan["message_id"] as! String
         try button("MessageBox inbox").tap()
+        let refreshAfter = Date().timeIntervalSince1970
         event("refresh_tapped"); try button("Refresh inbox").tap()
+        try nativeWalletReturn(after:refreshAfter,kind:"runInbox")
         let row = app.buttons["inbox-"+id]
         var lastRefresh = Date(), refreshes = 0
         try waitForOutcome {
-            guard self.app.state == .runningForeground else { return false }
-            if row.exists { return true }
+            // Cached rows remain in the tree while Refresh disables the page.
+            // One frozen snapshot must prove completion before any row is used.
+            guard let snapshot = self.readyInboxSnapshot() else { return false }
+            if self.findSnapshot(snapshot,identifier:"inbox-"+id)?.isEnabled == true { return true }
             // A fresh accepted message can lag the first inbox read. Retry only
-            // completed read operations; never foreground Crypton over ME.
-            if self.app.buttons["walletStatus"].label == "Inbox up to date" && Date().timeIntervalSince(lastRefresh) >= 2 && refreshes < 10 {
+            // completed reads; never foreground Crypton over ME.
+            if Date().timeIntervalSince(lastRefresh) >= 2 && refreshes < 10 {
                 refreshes += 1; lastRefresh = Date()
                 self.event("refresh_retry",["attempt":refreshes])
+                let after = Date().timeIntervalSince1970
                 self.app.buttons["Refresh inbox"].tap()
+                do { try self.nativeWalletReturn(after:after,kind:"runInbox") } catch { return false }
             }
             return false
         }
-        event("received",["message_id":id]); row.tap()
+        event("received",["message_id":id]); try button("inbox-"+id).tap()
+        let decryptAfter = Date().timeIntervalSince1970
         event("decrypt_tapped"); try button("Decrypt message").tap()
+        try nativeWalletReturn(after:decryptAfter,kind:"runInbox")
         let plaintext = app.staticTexts["inboxPlaintext"]
-        try waitForOutcome { self.app.state == .runningForeground && plaintext.exists }
+        try waitForOutcome { plaintext.exists }
         try require(plaintext.label == text,"Recipient plaintext does not match the exact requested message")
         event("decrypted",["text_sha256":SHA256.hash(data:Data(text.utf8)).map{String(format:"%02x",$0)}.joined()])
         try button("Back to inbox").tap(); try require(row.waitForExistence(timeout:10),"Received message was not retained")
-        row.tap(); try require(app.buttons["Decrypt message"].waitForExistence(timeout:10),"Retained ciphertext cannot be reopened")
+        try button("inbox-"+id).tap(); try require(app.buttons["Decrypt message"].waitForExistence(timeout:10),"Retained ciphertext cannot be reopened")
         event("retained",["message_id":id])
     }
 }

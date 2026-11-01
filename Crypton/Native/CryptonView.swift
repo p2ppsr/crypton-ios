@@ -76,7 +76,12 @@ struct CryptonView: View {
         .onChange(of:scenePhase) { phase in model.active(phase == .active) }
         .onReceive(NotificationCenter.default.publisher(for:UIApplication.didBecomeActiveNotification)) { _ in model.active(true) }
         .onReceive(NotificationCenter.default.publisher(for:UIApplication.willResignActiveNotification)) { _ in model.active(false) }
-        .onAppear { model.active(true) }
+        .onAppear {
+            model.active(true)
+            #if targetEnvironment(simulator)
+            model.startScriptIfRequested()
+            #endif
+        }
     }
     @ViewBuilder private var content: some View {
         switch model.screen {

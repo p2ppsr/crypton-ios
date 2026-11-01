@@ -146,6 +146,14 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     func connection() throws -> WalletConnection {
         guard let wallet = wallet else { throw CryptonError("Add a BRC-100 wallet address in Settings first.") }; return wallet
     }
+    #if targetEnvironment(simulator)
+    private var scriptedRun: ScriptedRun?
+    private var checkedScript = false
+    func startScriptIfRequested() {
+        guard !checkedScript else { return }; checkedScript = true
+        scriptedRun = ScriptedRun(model:self); scriptedRun?.start()
+    }
+    #endif
     private func crypto() throws -> CryptoEngine {
         if let engine = engine { return engine }
         let engine = CryptoEngine(wallet:try connection(),store:store,inbox:inboxStore)

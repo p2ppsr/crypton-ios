@@ -1,65 +1,57 @@
 # One-command recorded sends
 
-From this checkout on the configured Mac:
-
 ```sh
-./scripts/send-message.py "The text to send"
+/Users/bob/crypton-ios/scripts/send-message.py "The text to send"
 ```
 
-The default direction is primary iOS → peer iOS. Add `--reverse` for peer → primary. A UTC composition timestamp and a unique run ID are appended to the supplied text when the request body is created, before building/launching the apps. The same run ID appears in the message, console and reports; the later UI text-entry time is recorded separately. Use shell quoting as usual; the runner passes text as data, never as shell code.
+The default direction is primary iOS → peer iOS. Add `--reverse` for peer → primary. The command appends a UTC composition timestamp and a unique run ID when it creates the request body, before building/launching. That same ID appears in the message, console and reports. Text is passed as JSON data, never shell code.
 
-The command builds the `CryptonSendRun` scheme, starts private MP4 recording on both selected simulators, installs the app/test runner in place, verifies normal-message settings, composes the text, and taps Send once. It waits for ME's final payment review without switching away or clicking Pay/Allow. When Pay appears it brings Simulator forward and prints the sender device, composition timestamp and run ID. Review the full wallet total and click **Pay once** yourself; leave **Allow up to** unchanged. ME's own review deadline still applies. New permission prompts also require operator review; the script never grants access.
+## Execution
 
-After server acceptance, the command refreshes the other simulator's inbox, selects the **exact accepted MessageBox ID**, decrypts it, compares the full plaintext, and checks that the encrypted message remains available after leaving and reopening it. If the first inbox read is empty, it retries completed reads up to ten times within the phase deadline, without making a payment or switching away from an open wallet request. The script reports success only after explicit completion events; a green but empty XCTest run does not count.
+Version 2.5.5 uses a **simulator-only native driver** that calls Crypton's ordinary `AppModel` actions: choose the contact, compose, Send with MessageBox, refresh the inbox, open/decrypt, and close/reopen the retained copy. The real encryption, native ME bridge, grouped permissions, fresh quote comparison, payment journal and MessageBox validation all remain in those actions. The driver does not use XCTest taps or read application foreground states to decide whether an operation finished. It awaits each native action's actual completion.
 
-The UI sequence and checks are repeatable. Wallet approval time, storage/network responses and server delivery remain external inputs. This is not a promise that every run will succeed or take the same time.
+The command builds Release, records both selected simulators, and installs Crypton in place. It checks ME/v2/retained-message settings without changing them, then makes one Send attempt. Review the full wallet total and click **Pay once** yourself in ME; leave **Allow up to** unchanged. The command never clicks Pay/Allow, grants access, changes wallet policy or extends ME's review deadline. It foregrounds Simulator and prints the sender, composition time and run ID when review is requested. Exact Pay-visible timing comes from ME's existing spending-modal diagnostics when available; the earlier native review-request event is labeled separately.
 
-## Machine configuration
+After acceptance, the command refreshes the peer, selects the exact MessageBox ID, decrypts and compares the complete plaintext, then verifies its read encrypted copy remains available after closing/reopening. Completed empty reads can be retried; payments cannot. Network responses, wallet decisions and fees remain external inputs, so repeatable execution does not guarantee identical outcomes or durations.
 
-This Mac's primary/peer profiles are saved privately in `.recordings/send-profiles.json`. The file contains simulator UUIDs, names and public receiving/delivery keys. It is excluded from Git. To configure another machine, copy `scripts/send-profiles.example.json` there, fill in both devices and both public keys from each Crypton contact card, and use `--config <path>` if needed. Production runs require two distinct available iOS simulators with independently registered ME wallets and the required Crypton permissions already reviewed.
+The native control entry point is compiled only for the iOS simulator. It has no URL handler and cannot be invoked through a shared message or web page. A local `simctl` launch selects a private plan by UUID. The app consumes/deletes the transient plan; the controller also cleans it up on launch failure. The original request remains in the user's private recording directory. No wallet credential is placed in a plan. A single-use authenticated host claim prevents replaying Send after process/runner recovery. Verification plans have no sending capability.
 
-Both simulators must use **Metanet Explorer**, Crypton v2, **Sent: remove after confirmed delivery = off**, and **Received: decrypt once and remove = off**. The script checks these settings and fails without changing them. Existing wallets, grants, contacts and saved outbox/inbox data are preserved; the command never uninstalls or resets applications. It installs the checked-out Crypton build, so make sure the checkout is the version you intend to test.
+## Configuration
 
-Xcode, Python 3, Node (fixture mode only), FFmpeg and FFprobe are required. `DEVELOPER_DIR` overrides the Xcode selection; on this Mac the runner otherwise selects the installed Xcode 26.6. UI automation uses Xcode/XCTest, not coordinate clicks. The production configuration builds Release; disposable fixtures use Debug and the existing isolated fixture stores.
+This Mac's public contact keys and simulator UUIDs are in the ignored `.recordings/send-profiles.json`. On another Mac, copy `scripts/send-profiles.example.json`, fill both public keys from each Crypton contact card and both UUIDs, and pass `--config <path>` if needed. Production runs require two distinct iOS simulators with independently registered ME wallets and already-reviewed Crypton permissions.
+
+Both profiles must use ME, Crypton v2, and retained sent/received copies. The command preserves wallet data, grants, contacts and journals; it never uninstalls/resets an app. It installs the checked-out Crypton build, so use the checkout you intend to test. Xcode, Python 3, FFmpeg and FFprobe are required; fixture mode also needs Node and the pinned fixture dependencies. `DEVELOPER_DIR` overrides Xcode selection; this Mac otherwise uses its installed Xcode 26.6.
 
 ```sh
-# Validate profiles without launching an app or touching a wallet.
 ./scripts/send-message.py "Profile check" --dry-run
-
-# Test the whole command without a live wallet or any real spending.
-./scripts/send-message.py 'Unicode test: café 🌍 "quoted"' \
-  --fixture --sdk-root /tmp/crypton-ux251-fixtures
-
-# Host-only tests for literal parameter handling and replay protection.
+./scripts/send-message.py 'Fixture: café 🌍 "quoted"' --fixture --sdk-root /tmp/crypton-ux251-fixtures
 python3 scripts/test-send-command.py
 ```
 
-Fixture mode is restricted to the explicitly named `Crypton-iOS-Test` simulator and uses an ephemeral SDK wallet and loopback MessageBox service. It performs a retained self-send through the same UI harness. A fixture pass does not establish a production two-wallet send or test human ME payment approval.
+Fixtures use only `Crypton-iOS-Test`, ephemeral SDK wallets and the loopback MessageBox service. They are retained self-sends and spend no live funds. A fixture pass does not prove a new two-wallet production payment.
 
-## Evidence and timings
+## Verification-only recovery
 
-Each command creates `.recordings/<UTC>-send-<unique>/` containing:
+For a known message that was already paid/submitted, verify the receiver without sending again:
 
-- `request.json`: exact text, timestamp and run configuration; private local data.
-- `events.jsonl`: UTC and monotonic UI-stage timestamps.
-- `timings.json` and `timing-report.txt`: observed stage intervals and a readable timeline.
-- Per-device `*.pipeline.jsonl`: native HTTP, wallet and checkpoint spans, without payloads or keys.
-- `wallet-review-events.json`: scoped ME approval/expiry/finalization diagnostics when existing diagnostics consent makes them available. The command does not enable diagnostics or export unrelated fields.
-- Per-device recording subdirectories: finalized H.264 `screen.mp4`, original capture and metadata.
-- Build/test logs, per-phase xcresults and `result.json` with the exact outcome and accepted message ID.
+```sh
+./scripts/send-message.py --verify-run <original-run-directory> --message-id <exact-MessageBox-ID>
+```
 
-UI completion times are sampled observations. Use native spans and ME diagnostics for exact operation boundaries. Preparation, cold application launches, payment review and verification are separate events; build time is not MessageBox latency. The same run ID correlates both endpoints. Keep all evidence local because recordings, request files and xcresults can contain message text and wallet details.
+This mode reads the original text/hash/run ID, launches only the receiving simulator and performs refresh/decryption/retention checks. It rejects a sending phase and does not mint a send claim. Success marks the controller's original record `recipient_verified` with a link to the verification evidence. It does **not** manufacture a sender acceptance receipt or change a wallet/outbox journal. An outbox still marked SUBMITTING retains its saved payment and missing-receipt evidence.
 
-## Failure and replay behavior
+An unresolved interrupted production send remains `needs_recovery`, blocking another send from that profile. Empty wallet history alone does not prove failure. Inspect the original run and saved outbox before any further payment. Ctrl-C/SIGTERM stop the controller and finalize recordings; they do not cancel an in-flight wallet operation. An interrupted capture is not proof of the eventual wallet outcome.
 
-There is one Send attempt per run. A host-side exclusive claim survives test-runner reinstalls; a second runner cannot claim the same send. An additional runner-local marker blocks ordinary test recovery replays. A lost claim response fails closed. No test failure automatically repeats a payment, resets a journal or requests another quote.
+## Evidence
 
-An interrupted production send is marked `needs_recovery`; another command from that sender is blocked while that outcome remains unresolved. Inspect the named run and Crypton's saved outbox using the normal recovery controls. Empty wallet history alone is not proof that a payment failed. A confirmed accepted message whose receiving check failed remains `accepted`, rather than being misreported as unsent. Receiver-only resumption and automated resolution of an uncertain payment are not implemented by this command.
+Each `.recordings/<UTC>-send-<unique>/` contains the private original request, structured UTC/monotonic events, result JSON, timing JSON/readable report, per-device native pipeline logs and finalized H.264 MP4 subdirectories. Scoped ME review events are exported if existing diagnostics consent makes them available; the command does not enable diagnostics or export unrelated wallet fields. Recordings/request files can contain message text and wallet details and remain outside Git.
 
-Ctrl-C and SIGTERM stop the test and finalize its recordings. A failed recorder prevents a successful result from being reported. Host deadlines bound stuck tests; they do not extend ME's payment-review deadline or bypass its approval checks.
+Native action timestamps and ME diagnostic timestamps are distinct from controller observation time. Build/setup time is not MessageBox latency. Recorder or timing-capture failure prevents a successful evidence result. Native simulator event files contain stage information and hashes, not plaintext; the transient request file is consumed/deleted.
 
-## Verification
+## Recorded incident and verification
 
-Recorded disposable runs passed with quoted text, accented characters and emoji, including exact plaintext matching and retained-message reopening. An additional recorded run deliberately returned an empty first inbox page; its read-only retry then received, decrypted and retained the message without another Send. Host tests cover literal parameter encoding, selecting only the opt-in UI test, refusing events from another run, and single-use claims (including a bad token and duplicate claims). The Release automation scheme builds successfully. The initial setup failures and their finalized recordings are retained privately alongside the successful runs.
+The first live UI-driver run composed **2026-11-01 20:45:02 UTC**, run `1fff3335-716e-4032-a588-74f3c1886d1d`, reached Pay after 16.397 seconds. ME approved at 20:46:08.974 UTC and finalized signing at 20:46:10.324 UTC. XCTest then read the already-disappearing Pay button and failed. The paid transaction was saved and submission started, but no acceptance receipt reached the sender journal.
 
-A two-wallet production run using this command, including its human Pay handoff, remains to be performed. Previous manually driven production sends are separate evidence.
+The retained recordings/diagnostics establish a script failure after approval. Further UI-driver checks exposed cached-row taps during refresh and unreliable cross-app state/hit points. The old XCTest path is retained only for regression investigation; the command now uses native action completion.
+
+The native verification-only run matched that original plaintext on the peer at **21:25:19 UTC**, confirmed retention at **21:25:20 UTC**, and finalized its MP4. No second send/payment was made. The sender's SUBMITTING journal was preserved. A complete disposable native-driver send/receive/decrypt/retention run also passed with accented characters, emoji and quotes. Host tests cover literal data, run identity, replay denial, verification-only capability restrictions and transient-plan cleanup. A fresh paid production send with the native driver remains a separate test requiring human wallet approval.

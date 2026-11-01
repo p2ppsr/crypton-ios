@@ -24,6 +24,47 @@ class Contract(unittest.TestCase):
             self.assertTrue(run.plan['message'].endswith('Run: '+run.plan['run_id']))
             self.assertIn('Composed: '+run.plan['composed_at'],run.plan['message'])
             self.assertEqual(run.state['run_id'],run.plan['run_id'])
+    def test_verification_reuses_exact_text_and_has_no_send_capability(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            profiles=[{'device':'sender'},{'device':'receiver'}]
+            original=send.Run(types.SimpleNamespace(text='Already paid',fixture=False,timeout=300),profiles)
+            original.plan.update(claim_url='http://127.0.0.1:1234/claim',claim_token='old-secret')
+            send.write(original.folder/'request.json',original.plan)
+            args=types.SimpleNamespace(text='',fixture=False,timeout=120,verify_run=original.folder,message_id='a'*64)
+            verified=send.Run(args,profiles)
+            self.assertEqual(verified.plan['message'],original.plan['message'])
+            self.assertEqual(verified.plan['run_id'],original.plan['run_id'])
+            self.assertNotIn('claim_token',verified.plan)
+            self.assertNotIn('claim_url',verified.plan)
+            with patch.object(send.subprocess,'Popen') as process:
+                with self.assertRaisesRegex(RuntimeError,'cannot enter a sending phase'):
+                    verified.phase(Path('unused'),'send',profiles[0])
+                process.assert_not_called()
+    def test_native_watch_requires_a_matching_started_operation(self):
+        from datetime import datetime
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'pipeline.jsonl'
+            events=[('00:00:00','a','start.runCrypto'),('00:00:01','a','complete'),('00:00:02','b','start.runInbox'),('00:00:03','b','complete')]
+            path.write_text('\n'.join(json.dumps({'timestamp':'2026-11-01 '+at+'.000000+0000','eventMessage':'Crypton pipeline '+op+' '+stage+' 1.0ms'}) for at,op,stage in events))
+            after=datetime.fromisoformat('2026-11-01T00:00:01+00:00').timestamp()
+            self.assertEqual(send.native_status(path,after,'runInbox'),'complete')
+            self.assertEqual(send.native_status(path,after,'runDelivery'),'waiting')
+            self.assertEqual(send.native_status(path,after+10,'runInbox'),'waiting')
+    def test_verification_watch_server_cannot_grant_send(self):
+        import threading
+        with tempfile.TemporaryDirectory() as folder:
+            run=send.Run.__new__(send.Run);run.folder=Path(folder);run.state_lock=threading.RLock()
+            run.args=types.SimpleNamespace(verify_run=Path('old-run'));run.state={'status':'verifying'};run.plan={'run_id':'test'}
+            run.start_claim_server()
+            try:
+                self.assertNotIn('claim_token',run.plan)
+                req=urllib.request.Request(run.plan['watch_url'].replace('/watch','/claim'),data=b'',method='POST',headers={'Authorization':'Bearer '+run.plan['watch_token'],'X-Crypton-Run':'test'})
+                with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(req,timeout=3)
+                self.assertEqual(error.exception.code,403);error.exception.close()
+                self.assertFalse((run.folder/'send-claimed').exists())
+                self.assertEqual(run.state['status'],'verifying')
+            finally:run.claim_server.shutdown();run.claim_server.server_close()
     def test_xctestrun_preserves_literal_text_and_selects_only_opt_in_test(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder); template = root/'source.xctestrun'; target = root/'role.xctestrun'
@@ -65,6 +106,13 @@ class Contract(unittest.TestCase):
             (run.folder/'send-claimed').touch()
             run.event({'run_id':'test','utc':'now','role':'send','stage':'failed','send_attempted':False})
             self.assertEqual(run.state['status'],'sending')
+    def test_pre_send_failure_without_a_claim_does_not_block_a_new_run(self):
+        import threading
+        with tempfile.TemporaryDirectory() as folder:
+            run=send.Run.__new__(send.Run);run.plan={'run_id':'test'};run.folder=Path(folder)
+            run.state_lock=threading.RLock();run.events=[];run.state={'status':'sending'}
+            run.event({'run_id':'test','utc':'now','role':'send','stage':'failed','send_attempted':False})
+            self.assertEqual(run.state['status'],'failed')
     def test_empty_successful_xctest_is_not_a_completed_phase(self):
         import io
         from unittest.mock import patch
@@ -75,7 +123,17 @@ class Contract(unittest.TestCase):
             process=types.SimpleNamespace(stdout=io.StringIO(''),wait=lambda timeout=None:0)
             with patch.object(send,'configure_test'),patch.object(send.subprocess,'Popen',return_value=process):
                 with self.assertRaisesRegex(RuntimeError,'without the required preflight_complete'):
-                    run.phase(Path('unused'),'preflight',run.profiles[0])
+                    run.phase_xctest(Path('unused'),'preflight',run.profiles[0])
+    def test_failed_native_launch_removes_transient_plaintext_plan(self):
+        import subprocess,threading
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            run=send.Run.__new__(send.Run);run.folder=Path(folder);run.plan={'run_id':'11111111-1111-1111-1111-111111111111'}
+            run.profiles=[{'device':'sender'},{'device':'receiver'}];run.args=types.SimpleNamespace(timeout=30,fixture=False)
+            run.state={};run.events=[];run.state_lock=threading.RLock()
+            with patch.object(send.subprocess,'check_output',return_value=str(Path(folder)/'container')+'\n'),patch.object(send,'sim',side_effect=RuntimeError('Launch failed')):
+                with self.assertRaisesRegex(RuntimeError,'Launch failed'):run.phase(None,'receive',run.profiles[1])
+            self.assertFalse((Path(folder)/'container/Library/Application Support/ScriptedRuns'/run.plan['run_id']/'request.json').exists())
     def test_another_run_cannot_inject_acceptance(self):
         run=send.Run.__new__(send.Run);run.plan={'run_id':'expected'}
         with self.assertRaisesRegex(RuntimeError,'Unexpected run identity'):
