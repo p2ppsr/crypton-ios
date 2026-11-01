@@ -81,10 +81,11 @@ window.runDelivery=async request=>{
   const operation=request.id;active=operation;
   try {
     const r=request.record;envelope(r.envelope);
+    const immediate=request.action==='prepareAndSend';let action=request.action;
     const wallet=deliveryWallet(operation),client=authClient(operation,wallet);
     const sender=(await wallet.getPublicKey({identityKey:true})).publicKey;
     let result;
-    if(request.action==='prepare') {
+    if(action==='prepare'||immediate) {
       const recipient=r.recipient==='self'?sender:r.recipient;
       const quote=await getQuote(client,r,recipient);
       const message={message:'Encrypted message sent from Crypton for iOS. Open Crypton and import this payload:\n\n'+r.envelope,url:'https://crypton.metanet.app/'};
@@ -98,7 +99,15 @@ window.runDelivery=async request=>{
       const plan=await paymentPlan(wallet,r,recipient,sender,quote);
       const prepared={sender,recipient,quote,messageId,body,...plan,quotedAt:Date.now()};
       await deliveryRpc(operation,'checkpoint',{kind:'prepared',value:prepared});result={prepared:true};
-    } else if(request.action==='recover') {
+      if(immediate) {
+        // One operation keeps AuthFetch's authenticated peer session in memory.
+        // Native code authorizes the send phase only after saving this plan.
+        r.prepared=prepared;action='send';
+        const currentSender=(await wallet.getPublicKey({identityKey:true})).publicKey;
+        if(currentSender!==sender)throw Error('ME wallet profile changed. Switch back to the wallet shown in this delivery.');
+      }
+    }
+    if(action==='recover') {
       if(sender!==r.prepared.sender)throw Error('Switch back to the wallet used for this payment.');
       const history=await wallet.listActions({labels:['crypton-delivery-'+r.id],labelQueryMode:'all',includeOutputs:true,includeOutputLockingScripts:true,includeLabels:true,limit:10});
       const transactions=(history.actions||[]).map(a=>({txid:a.txid,status:a.status}));
@@ -117,11 +126,11 @@ window.runDelivery=async request=>{
         await deliveryRpc(operation,'checkpoint',{kind:'recoveredPayment',value:recovered});
       }
       result={recovered:true};
-    } else {
+    } else if(action!=='prepare') {
       const p=r.prepared;if(sender!==p.sender)throw Error('ME wallet profile changed. Switch back to the wallet shown in this delivery.');
       let payment=r.payment;
       const required=p.quote.deliveryFee+p.quote.recipientFee;
-      if(request.action==='send') {
+      if(action==='send') {
         const current=await getQuote(client,r,p.recipient);
         if(current.deliveryFee!==p.quote.deliveryFee||current.recipientFee!==p.quote.recipientFee||current.deliveryAgentIdentityKey!==p.quote.deliveryAgentIdentityKey)throw Error('The quote changed or expired. Refresh the fee before sending.');
         await deliveryRpc(operation,'checkpoint',{kind:'quoteRevalidated',value:{quote:current}});
@@ -130,7 +139,7 @@ window.runDelivery=async request=>{
           payment=validatedPayment(action,p);
           await deliveryRpc(operation,'checkpoint',{kind:'paid',value:payment});
         }
-      } else if(request.action==='resume') {
+      } else if(action==='resume') {
         if(r.state==='PAYMENT_RETURNED') {
           payment=validatedPayment(portable(r.walletResult),p);
           await deliveryRpc(operation,'checkpoint',{kind:'paid',value:payment});

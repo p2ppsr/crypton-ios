@@ -5,8 +5,9 @@ const {ProtoWallet,PrivateKey,Transaction,Utils}=load('@bsv/sdk');
 const express=load('express');const {createAuthMiddleware}=load('@bsv/auth-express-middleware');
 const serverWallet=new ProtoWallet(new PrivateKey(2));const accepted=new Map();const senders=new Map();const acknowledged=new Set();
 const app=express();app.use(express.json({limit:'8mb'}));app.use(express.raw({type:'application/octet-stream',limit:'8mb'}));
+app.use((req,res,next)=>{if(req.path==='/.well-known/auth')deliveryFixture.authHandshakes++;next();});
 app.use(createAuthMiddleware({wallet:serverWallet,allowUnauthenticated:false}));
-app.get('/permissions/quote',(req,res)=>res.json({status:'success',quote:{deliveryFee:deliveryFixture.changedFee?11:10,recipientFee:10}}));
+app.get('/permissions/quote',(req,res)=>{deliveryFixture.quotes++;res.json({status:'success',quote:{deliveryFee:deliveryFixture.changedFee||(deliveryFixture.changeFeeAtQuote&&deliveryFixture.quotes>=deliveryFixture.changeFeeAtQuote)?11:10,recipientFee:10}});});
 app.post('/listMessages',(req,res)=>{
  deliveryFixture.inboxLists++;
  const {messageBox,offset,limit,messageId}=req.body;

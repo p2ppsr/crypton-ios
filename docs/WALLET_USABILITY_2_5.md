@@ -85,3 +85,16 @@ Verification on 2026-11-01:
 - Recorded installed-app message `issue81-final-155801`, composed **2026-11-01 15:58:01 UTC**, was deliberately left unpaid. The review expired at **16:01:13 UTC**, ME returned automatically, and Crypton saved the definitive expiry refusal. The original wallet's empty history then enabled **Retry declined payment**, which returned this test record to DRAFT without requesting or making a payment. Diagnostic capture: **1 review, 3 events, 1 expiry, 0 approvals, 0 finalizations, 0 cleanup failures, 0 violations**. Its private H.264 MP4 is finalized and retained with the diagnostic JSON.
 
 The first installed run's handoff failure and the final successful expiry/recovery run are both retained. The final Pay-after-suspension close refinement is covered by the component regression; it was not separately triggered in a funded wallet. No new paid two-way production send is claimed. The provider's original failed-status transition remains open in ME issue #81.
+
+
+## 2.5.3: one authenticated session before payment review
+
+The recorded normal message `speed-164926`, composed **2026-11-01 16:49:26 UTC**, reached the final Pay review 17.901 seconds after Send and was accepted 27.667 seconds after Send. Its separate prepare/send engine invocations each constructed an AuthFetch client, repeating the server authentication handshake despite sharing one ME page.
+
+The immediate composer send now runs both phases within one engine operation and one AuthFetch instance. Native authorization remains phase-specific: only a successfully validated and durably saved prepared checkpoint enables the send phase. The current wallet identity is checked again, the quote is fetched and compared again, and payment results are journaled before submission. Standalone fee checks, subsequent sends and recovery create fresh clients; no authenticated session is stored globally or reused across operations or wallets.
+
+Local `Crypton pipeline` diagnostic lines now include an operation ID, a fixed stage name and monotonic elapsed milliseconds for engine completion, delivery-wallet calls, allowed HTTP requests and saved checkpoints. They contain no wallet identity, message, amount, transaction or request arguments. Completion from an old cancelled operation cannot be attributed to a newer one. These events make the next recorded run measurable without relying on screenshot observation times.
+
+Four recorded native/SDK integration tests passed: a complete immediate send uses one handshake and two quote requests; a changed second quote produces zero payment attempts; composer encryption and sending still share one wallet visit; lost responses retain protected recovery without a second payment. All four shipped ME-page JavaScript regressions also passed. The initial test launch was stopped during compilation after an incorrect test-class selector was noticed; its recording is retained and is not counted as a pass. The corrected run executed four tests with zero failures.
+
+This removes a verified duplicate handshake. It does not claim a particular live speedup: the 17.901-second measurement includes cold ME startup, wallet storage reads and network response time. A subsequent comparable timed run is needed to measure the remaining delay. ME build 210 is sufficient; this optimization changes only Crypton.

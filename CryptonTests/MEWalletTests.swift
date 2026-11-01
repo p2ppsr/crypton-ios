@@ -513,15 +513,40 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         XCTAssertNotEqual(identity["receivingKey"] as? String,identity["walletIdentity"] as? String)
         let envelope = try await engine.run("seal",text:"Single ME visit retained message") as! String
         let id = try store.create(envelope:envelope,key:"self",recipient:"self",name:"Self")
-        let beforeLaunches = page.launches, before = integer(try await fixture("delivery-stats")["payments"])!
+        let beforeStats = try await fixture("delivery-stats")
+        let beforeLaunches = page.launches, before = integer(beforeStats["payments"])!
         _ = try await engine.prepareAndSend(id)
         XCTAssertEqual(page.launches,beforeLaunches+1,"Quote and send must share one ME capability page")
         XCTAssertEqual(try store.get(id)["state"] as? String,"SENT")
-        let paymentCount = integer(try await fixture("delivery-stats")["payments"])
+        let sentStats = try await fixture("delivery-stats")
+        let paymentCount = integer(sentStats["payments"])
         XCTAssertEqual(paymentCount,before+1)
+        XCTAssertEqual(integer(sentStats["authHandshakes"]),integer(beforeStats["authHandshakes"])!+1,"Immediate send must authenticate once across both quote requests")
+        XCTAssertEqual(integer(sentStats["quotes"]),integer(beforeStats["quotes"])!+2,"The final quote must still be revalidated")
         do { _ = try await engine.prepareAndSend(id); XCTFail("A completed record must not pay again") } catch { }
         let finalPaymentCount = integer(try await fixture("delivery-stats")["payments"])
         XCTAssertEqual(finalPaymentCount,before+1)
+    }
+    @MainActor func testImmediateSendStillRejectsChangedRevalidationWithoutPayment() async throws {
+        try await available()
+        let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:folder) }
+        let store = try DeliveryStore(directory:folder,fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
+        let page = MEPageFixture(); defer { page.close() }
+        let engine = CryptoEngine(wallet:page.wallet,store:store); defer { engine.close() }
+        let envelope = try await engine.run("seal",text:"Immediate send must revalidate before payment") as! String
+        let id = try store.create(envelope:envelope,key:"self",recipient:"self",name:"Disposable changed fee")
+        let before = try await fixture("delivery-stats")
+        _ = try await fixture("change-fee-on-revalidation",["changed":true])
+        do { _ = try await engine.prepareAndSend(id); XCTFail("Changed quote reached payment") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("quote changed")) }
+        _ = try await fixture("change-fee-on-revalidation",["changed":false])
+        XCTAssertEqual(try store.get(id)["state"] as? String,"QUOTED")
+        let after = try await fixture("delivery-stats")
+        XCTAssertEqual(integer(after["payments"]),integer(before["payments"]))
+        XCTAssertEqual(integer(after["paymentAttempts"]),integer(before["paymentAttempts"]))
+        XCTAssertEqual(integer(after["quotes"]),integer(before["quotes"])!+2)
+        XCTAssertEqual(integer(after["authHandshakes"]),integer(before["authHandshakes"])!+1)
     }
     @MainActor func testComposerSelfSendUsesOneWalletVisitIncludingEncryption() async throws {
         try await available()

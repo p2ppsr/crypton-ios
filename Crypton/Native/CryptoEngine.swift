@@ -11,6 +11,8 @@ import WebKit
     private var pending: CheckedContinuation<Any, Error>?
     private var operation: String?
     private var delivery: (id: String, action: String)?
+    private var sendAfterPreparation = false
+    private var timingStarted: TimeInterval?
     private var discovery: (method:String,args:JSON)?
     private var discoveryRequested = false
     private var sharingIdentity = false
@@ -57,8 +59,12 @@ import WebKit
     func prepareAndSend(_ id:String) async throws -> Any {
         let me = wallet as? MEWallet
         me?.beginOperation(); defer { me?.endOperation() }
-        _ = try await deliver("prepare",id:id)
-        return try await deliver("send",id:id)
+        guard pending == nil else { throw CryptonError("Another Crypton request is in progress.") }
+        try store.begin(id,action:"prepare")
+        delivery = (id,"prepare"); discovery = nil; inboxSession = nil; sendAfterPreparation = true
+        defer { sendAfterPreparation = false }
+        do { return try await start("runDelivery",request:["action":"prepareAndSend","record":try store.get(id)]) }
+        catch { try? store.saveError(id,error); throw error }
     }
     func inbox(_ action:String,wallet:String = "",id:String = "",offset:Int = 0,layer:String = "") async throws -> JSON {
         guard pending == nil else { throw CryptonError("Another Crypton request is in progress.") }
@@ -70,7 +76,8 @@ import WebKit
     private func start(_ function: String, request: JSON) async throws -> Any {
         guard pending == nil else { throw CryptonError("Another Crypton request is in progress.") }
         guard root != nil else { throw CryptonError("Bundled crypto engine is missing.") }
-        let id = UUID().uuidString; operation = id
+        let id = UUID().uuidString; operation = id; timingStarted = ProcessInfo.processInfo.systemUptime
+        trace("start." + function)
         var request = request; request["id"] = id
         return try await withCheckedThrowingContinuation { continuation in
             (wallet as? MEWallet)?.beginOperation()
@@ -78,6 +85,12 @@ import WebKit
             armTimeout(id)
             dispatch()
         }
+    }
+    /// Local timing only: operation ID, fixed stage names and monotonic elapsed time.
+    /// No wallet keys, message content, transaction bytes or request arguments.
+    private func trace(_ stage:String, token:String? = nil) {
+        guard let id = operation, token == nil || token == id, let began = timingStarted else { return }
+        NSLog("Crypton pipeline %@ %@ %.1fms",id,stage,(ProcessInfo.processInfo.systemUptime - began) * 1000)
     }
     private func armTimeout(_ id:String) {
         timer?.cancel()
@@ -93,6 +106,8 @@ import WebKit
         catch { finish(.failure(error)) }
     }
     private func finish(_ result: Result<Any,Error>) {
+        switch result { case .success: trace("complete"); case .failure: trace("failed") }
+        timingStarted = nil; sendAfterPreparation = false
         (wallet as? MEWallet)?.endOperation()
         let done = pending; pending = nil; operation = nil; sharingIdentity = false; queued = nil; discovery = nil; inboxSession = nil; timer?.cancel(); timer = nil
         done?.resume(with:result)
@@ -150,6 +165,8 @@ import WebKit
                     let reviewingPayment = method == "createAction" && wallet is MEWallet
                     if reviewingPayment { timer?.cancel(); timer = nil }
                     defer { if reviewingPayment, operation == token { armTimeout(token) } }
+                    trace("wallet." + method + ".start",token:token)
+                    defer { trace("wallet." + method + ".finished",token:token) }
                     do { value = try await wallet.call(method,args,raw:true) }
                     catch {
                         if method == "createAction", let refusal = error as? WalletRefusal, refusal.notCommitted { try store.walletRefused(session.id,refusal:refusal) }
@@ -160,8 +177,14 @@ import WebKit
                 case "checkpoint":
                     guard let kind = data["kind"] as? String, let v = data["value"] as? JSON else { throw CryptonError("Invalid checkpoint.") }
                     if let session = inboxSession { try session.checkpoint(kind,v) }
-                    else if let session = delivery { try store.checkpoint(session.id,action:session.action,kind:kind,value:v) }
-                    else { throw CryptonError("Missing checkpoint authorization.") }; value = true
+                    else if let session = delivery {
+                        try store.checkpoint(session.id,action:session.action,kind:kind,value:v)
+                        if sendAfterPreparation && kind == "prepared" {
+                            try store.begin(session.id,action:"send"); delivery = (session.id,"send")
+                        }
+                    }
+                    else { throw CryptonError("Missing checkpoint authorization.") }
+                    trace("checkpoint." + kind); value = true
                 case "http":
                     guard let request = data["request"] as? JSON else { throw CryptonError("Missing HTTP request.") }
                     if let address = request["url"] as? String, let url = URL(string:address) {
@@ -195,6 +218,9 @@ import WebKit
         if let session = inboxSession { try session.beforeHTTP(url,method,body) }
         else if let session = delivery { try store.beforeHTTP(session.id,action:session.action,url:url,method:method,body:body) }
         else { throw CryptonError("Missing MessageBox authorization.") }
+        let timingToken = operation ?? ""
+        trace("http." + url.path + ".start",token:timingToken)
+        defer { trace("http." + url.path + ".finished",token:timingToken) }
         var request = URLRequest(url:url); request.httpMethod = method
         if method == "POST" { request.httpBody = Data(body.utf8) }
         for (key,value) in headers {
