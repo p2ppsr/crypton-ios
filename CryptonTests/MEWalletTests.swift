@@ -166,15 +166,25 @@ final class MEWalletTests: XCTestCase {
         content.addUserScript(WKUserScript(source:"window.ReactNativeWebView={postMessage:value=>window.webkit.messageHandlers.fixtureME.postMessage(value)}",injectionTime:.atDocumentStart,forMainFrameOnly:true))
         content.addUserScript(WKUserScript(source:"setInterval(()=>{const link=document.getElementById('return');if(link&&!link.hidden)link.click()},100)",injectionTime:.atDocumentEnd,forMainFrameOnly:true))
         let config = WKWebViewConfiguration(); config.userContentController = content; config.websiteDataStore = .nonPersistent()
-        web = WKWebView(frame:.zero,configuration:config); web.navigationDelegate = self
+        web = WKWebView(frame:CGRect(x:0,y:0,width:2,height:2),configuration:config); web.navigationDelegate = self
+        // ME's page correctly refuses wallet calls while hidden. Attach the
+        // fixture to the test app's window so it models a foreground wallet.
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        scene?.windows.first(where:{ $0.isKeyWindow })?.addSubview(web)
         wallet = MEWallet(open:{ [weak self] url in
             guard let self = self, url.scheme == "metanet", url.host == "browser", let target = URLComponents(url:url,resolvingAgainstBaseURL:false)?.queryItems?.first(where:{ $0.name == "url" })?.value.flatMap(URL.init(string:)) else { return false }
             self.launches += 1; self.active = false; self.web.load(URLRequest(url:target)); return true
         },foreground:{ [weak self] in self?.active ?? false },backgroundTime:false)
     }
     func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage) {
-        guard message.frameInfo.isMainFrame, let data = message.body as? String, let command = try? object(Data(data.utf8)), let id = command["id"] as? String,
-              command["type"] as? String == "CWI", command["isInvocation"] as? Bool == true, let method = command["call"] as? String, let args = command["args"] as? JSON else { return }
+        guard message.frameInfo.isMainFrame, let data = message.body as? String, let command = try? object(Data(data.utf8)) else { return }
+        if command["type"] as? String == "CRYPTON_RETURN", let callback = command["callback"] as? String, let url = URL(string:callback) {
+            let accepted = wallet.returned(url)
+            if accepted { active = true; wallet.resumed() }
+            web.evaluateJavaScript("window.postMessage({type:'CRYPTON_RETURN_STATUS',accepted:\(accepted)},'*');void 0")
+            return
+        }
+        guard let id = command["id"] as? String, command["type"] as? String == "CWI", command["isInvocation"] as? Bool == true, let method = command["call"] as? String, let args = command["args"] as? JSON else { return }
         requests += 1
         Task {
             var response:JSON = ["type":"CWI","isInvocation":false,"id":id]
@@ -200,7 +210,7 @@ final class MEWalletTests: XCTestCase {
         if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled { return }
         wallet.cancel()
     }
-    func close() { wallet.cancel(); web.configuration.userContentController.removeAllScriptMessageHandlers(); web.stopLoading() }
+    func close() { wallet.cancel(); web.configuration.userContentController.removeAllScriptMessageHandlers(); web.stopLoading(); web.removeFromSuperview() }
 }
 
 final class MEAndDeliveryIntegrationTests: XCTestCase {
@@ -425,6 +435,49 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         _ = try await fixture("deny-next")
         do { _ = try await page.wallet.call("getPublicKey",[:]); XCTFail("ME denial ignored") } catch { XCTAssertTrue(error.localizedDescription.contains("declined")) }
         XCTAssertGreaterThanOrEqual(page.requests,5)
+    }
+    @MainActor func testContactIdentityAndSingleVisitSend() async throws {
+        try await available()
+        let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:folder) }
+        let store = try DeliveryStore(directory:folder,fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
+        let page = MEPageFixture(); defer { page.close() }
+        let engine = CryptoEngine(wallet:page.wallet,store:store); defer { engine.close() }
+        let identityValue = try await engine.run("contactIdentity")
+        let identity = try XCTUnwrap(identityValue as? JSON)
+        XCTAssertNoThrow(try Wire.identity(identity["receivingKey"] as? String ?? ""))
+        XCTAssertNoThrow(try Wire.identity(identity["walletIdentity"] as? String ?? ""))
+        XCTAssertNotEqual(identity["receivingKey"] as? String,identity["walletIdentity"] as? String)
+        let envelope = try await engine.run("seal",text:"Single ME visit retained message") as! String
+        let id = try store.create(envelope:envelope,key:"self",recipient:"self",name:"Self")
+        let beforeLaunches = page.launches, before = integer(try await fixture("delivery-stats")["payments"])!
+        _ = try await engine.prepareAndSend(id)
+        XCTAssertEqual(page.launches,beforeLaunches+1,"Quote and send must share one ME capability page")
+        XCTAssertEqual(try store.get(id)["state"] as? String,"SENT")
+        let paymentCount = integer(try await fixture("delivery-stats")["payments"])
+        XCTAssertEqual(paymentCount,before+1)
+        do { _ = try await engine.prepareAndSend(id); XCTFail("A completed record must not pay again") } catch { }
+        let finalPaymentCount = integer(try await fixture("delivery-stats")["payments"])
+        XCTAssertEqual(finalPaymentCount,before+1)
+    }
+    @MainActor func testComposerSelfSendUsesOneWalletVisitIncludingEncryption() async throws {
+        try await available()
+        let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:folder) }
+        let store = try DeliveryStore(directory:folder,fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
+        let suite = "crypton.send."+UUID().uuidString, defaults = UserDefaults(suiteName:suite)!
+        defer { defaults.removePersistentDomain(forName:suite) }
+        defaults.set(false,forKey:"soundEnabled"); defaults.set(true,forKey:"guideSeen")
+        let page = MEPageFixture(); defer { page.close() }
+        let model = AppModel(defaults:defaults,store:store,wallet:page.wallet)
+        model.choose("self"); model.message = "Composer single visit: retained SDK fixture"
+        model.process(sendWithMessageBox:true)
+        for _ in 0..<600 { if !model.busy { break }; try await Task.sleep(nanoseconds:100_000_000) }
+        XCTAssertFalse(model.busy); XCTAssertNil(model.error)
+        XCTAssertEqual(model.screen,.delivery)
+        XCTAssertEqual(try store.get(model.deliveryID)["state"] as? String,"SENT")
+        XCTAssertEqual(model.status,"MessageBox delivery complete"); XCTAssertTrue(model.statusReady)
+        XCTAssertEqual(page.launches,1,"Self encryption, quote and payment must share one ME visit")
     }
     @MainActor func testNativePaidDeliveryRecoveryWithoutSecondPayment() async throws {
         try await available()

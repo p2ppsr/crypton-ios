@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 /// Ciphertext and JSON must retain the exact characters entered by the sender.
 struct MessageEditor: UIViewRepresentable {
     @Binding var text:String
+    var label:String = "messageEditor"
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context:Context) -> UITextView {
         let view = UITextView()
@@ -20,7 +21,14 @@ struct MessageEditor: UIViewRepresentable {
         view.adjustsFontForContentSizeCategory = true
         view.autocorrectionType = .no; view.autocapitalizationType = .none
         view.smartQuotesType = .no; view.smartDashesType = .no; view.smartInsertDeleteType = .no
-        view.accessibilityIdentifier = "messageEditor"
+        view.accessibilityIdentifier = label; view.accessibilityLabel = label
+        if label != "messageEditor" {
+            context.coordinator.editor = view
+            let toolbar = UIToolbar(frame:CGRect(x:0,y:0,width:320,height:44))
+            let done = UIBarButtonItem(barButtonSystemItem:.done,target:context.coordinator,action:#selector(Coordinator.finishEditing))
+            done.accessibilityIdentifier = "keyInputDone"; done.accessibilityLabel = "Done entering key"
+            toolbar.items = [UIBarButtonItem.flexibleSpace(),done]; view.inputAccessoryView = toolbar
+        }
         return view
     }
     func updateUIView(_ view:UITextView,context:Context) {
@@ -29,6 +37,8 @@ struct MessageEditor: UIViewRepresentable {
     }
     final class Coordinator: NSObject,UITextViewDelegate {
         var parent:MessageEditor
+        weak var editor:UITextView?
+        @objc func finishEditing() { editor?.resignFirstResponder() }
         init(_ parent:MessageEditor) { self.parent = parent }
         func textViewDidChange(_ textView:UITextView) { parent.text = textView.text }
     }

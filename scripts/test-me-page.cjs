@@ -39,7 +39,34 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await deliver('2');await pause(180);
     assert.equal(saves,2);assert.equal(returns.length,1);
     assert.equal(status.textContent,'Operation finished. Returning to Crypton…');
-    assert.equal(sandbox.location.href,'','Native acknowledgement suppresses the old URL fallback');
+    assert.equal(sandbox.location.href,'','Only native ME may perform the app return');
+    const callsAtCompletion = nextCalls; await pause(350);
+    assert.equal(nextCalls,callsAtCompletion,'A completed page must not poll a closed localhost listener');
     console.log('ME page: duplicate response channels, slow acknowledgement, queued calls and native return passed.');
   } finally {for(const timer of timers)clearTimeout(timer);}
 })().catch(error=>{console.error(error);process.exitCode=1;});
+
+(async () => {
+  const timers=new Set(), events={}, invocations=[], returns=[];
+  let reads=0, saves=0;
+  const doc={hidden:true,getElementById:id=>id==='status'?{textContent:''}:{href:'crypton-wallet://return/hidden',hidden:true,addEventListener:()=>{}}};
+  const sandbox={AbortController,clearTimeout,document:doc,location:{href:''},setTimeout:(fn,ms)=>{const t=setTimeout(fn,ms);timers.add(t);return t},fetch:async path=>{
+    if(path==='result'){saves++;return {ok:true}}
+    reads++;return {ok:true,json:async()=>({session:true,finished:saves===1,command:saves?null:{id:'visible-only',call:'getNetwork',type:'CWI',isInvocation:true,args:{}}})}
+  }};
+  sandbox.window=sandbox;sandbox.addEventListener=(name,fn)=>{events[name]=fn};
+  sandbox.ReactNativeWebView={postMessage:text=>{const m=JSON.parse(text);(m.type==='CRYPTON_RETURN'?returns:invocations).push(m)}};
+  vm.createContext(sandbox);
+  try {
+    vm.runInContext(fs.readFileSync('Crypton/Engine/me.js','utf8'),sandbox);
+    await pause(180);assert.equal(reads,0,'Hidden ME must not consume or dispatch wallet commands');
+    doc.hidden=false;await pause(180);assert.equal(invocations.length,1);
+    doc.hidden=true;await events.message({source:null,data:{id:'visible-only',type:'CWI',isInvocation:false,status:'success',result:{network:'mainnet'}}});
+    await pause(180);assert.equal(saves,1);assert.equal(returns.length,0,'Saving a completed response must not force a hidden app return');
+    doc.hidden=false;await pause(180);assert.equal(returns.length,1);
+    const finalReads=reads;await pause(1700);
+    assert.equal(sandbox.location.href,'','A missing native acknowledgement must not trigger a delayed URL navigation');
+    assert.equal(reads,finalReads,'Completion must stop polling even without a return acknowledgement');
+    console.log('ME page: hidden-page dispatch, completed result save, stopped polling and no unsafe URL fallback passed.');
+  } finally { for(const timer of timers)clearTimeout(timer) }
+})().catch(error=>{console.error(error);process.exitCode=1});

@@ -28,7 +28,8 @@ final class IncomingShareStore {
     }
     @discardableResult func stage(text:String) throws -> URL {
         guard text.utf8.count <= 100_000 else { throw CryptonError("Share encrypted text of at most 100 KB.") }
-        if Wire.isEnvelope(text) { _ = try Wire.envelope(text) }
+        if Wire.isContact(text) { _ = try Wire.contact(text) }
+        else if Wire.isEnvelope(text) { _ = try Wire.envelope(text) }
         else { _ = try Wire.legacy(text,peer:"self",encrypt:false) }
         return try write(Data(text.utf8),extension:"txt")
     }

@@ -5,6 +5,32 @@ import AVFoundation
 final class CryptonTests: XCTestCase {
     let key = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     func envelope() throws -> String { try jsonString(["protocol":"crypton","version":2,"sender":key,"ciphertext":Data(repeating:4,count:48).base64EncodedString()]) }
+    @MainActor func testCombinedContactImportExportAndDeliveryBinding() throws {
+        let deliveryKey = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+        let code = try Wire.contactCode(name:"Peer iOS",key:key,wallet:deliveryKey)
+        let suite = "crypton.contact."+UUID().uuidString, defaults = UserDefaults(suiteName:suite)!
+        defer { defaults.removePersistentDomain(forName:suite) }
+        let model = AppModel(defaults:defaults)
+        XCTAssertTrue(model.importMessage(code)); XCTAssertEqual(model.screen,.contacts)
+        XCTAssertTrue(model.contacts.isEmpty,"Contact import requires explicit saving")
+        model.saveContact()
+        let saved = try XCTUnwrap(model.contacts.first)
+        XCTAssertEqual(saved.walletIdentity,deliveryKey)
+        XCTAssertEqual(try Wire.contact(saved.shareText).key,key)
+        let reopened = AppModel(defaults:defaults)
+        reopened.chooseContact(try XCTUnwrap(reopened.contacts.first))
+        XCTAssertEqual(reopened.peer,key); XCTAssertEqual(reopened.recipientWalletDraft,deliveryKey)
+        reopened.output = try envelope(); reopened.outputKind = "encrypted"; reopened.newDelivery()
+        XCTAssertEqual(reopened.deliveryRecipient,deliveryKey)
+        model.choose(code); XCTAssertEqual(model.peer,key); XCTAssertEqual(model.recipientWalletDraft,deliveryKey)
+        var bad = try object(Data(code.utf8)); bad["privateKey"] = "never import"; XCTAssertThrowsError(try Wire.contact(try jsonString(bad)))
+        bad.removeValue(forKey:"privateKey"); bad["walletIdentity"] = String(repeating:"0",count:66); XCTAssertThrowsError(try Wire.contact(try jsonString(bad)))
+        bad["walletIdentity"] = deliveryKey; bad["version"] = true; XCTAssertThrowsError(try Wire.contact(try jsonString(bad)))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let shares = try IncomingShareStore(directory:directory)
+        let file = try shares.stage(text:code); XCTAssertEqual(try String(contentsOf:file),code)
+    }
     func testIdentityCurveValidation() throws {
         XCTAssertEqual(try Wire.identity("  " + key.uppercased() + "\n"),key)
         XCTAssertThrowsError(try Wire.identity("02" + String(repeating:"0",count:64)))

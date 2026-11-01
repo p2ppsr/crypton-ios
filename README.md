@@ -8,6 +8,8 @@ The branch includes the SwiftUI application, native ME handoff, Android-compatib
 
 Every UI/device test run is recorded as a private MP4. The simulator test runner captures automatically; see [recording runs and retaining error evidence](docs/RECORDING_RUNS.md) for manual runs and artifact locations.
 
+**2.5.0 usability update:** combined contact QR/text, one-session composer sends, guarded native return, completed inbox statuses and itemized ME payment totals. See [the changes and verification](docs/WALLET_USABILITY_2_5.md). Requires the companion ME update below.
+
 **2.4.1 wallet-flow update:** one ME page per operation, guarded automatic return, selectable BRC-116 permissions, persistent-grant ordering, fresh quote revalidation, and safe declined-payment recovery. Grouped native identity requires the [companion ME update](https://github.com/p2ppsr/metanet-explorer-mobile/tree/codex/crypton-wallet-usability). Compare the app pairing code in Crypton Settings with ME’s permission review. See [wallet usability and verification](docs/WALLET_USABILITY_2_4_1.md).
 
 ![Crypton home screen](docs/screenshots/home.png)
@@ -72,10 +74,12 @@ These public keys serve different purposes:
 | Identity | Where to find it | Purpose |
 | --- | --- | --- |
 | Crypton receiving key | **My identity**, with v2 selected | Give this to someone encrypting a v2 message for you. It is derived specifically for Crypton. |
-| ME wallet identity | **MessageBox outbox → My delivery wallet key** | Give this separately to someone delivering a notification to your ME wallet through MessageBox. |
+| ME wallet identity | Included in **My identity** contact code; expandable under **Delivery wallet key** | Addresses your MessageBox inbox. The separate outbox key action remains available for older clients. |
 | One-use sender key | The `sender` field of a v2 envelope | Generated freshly for each sealed message; used when decrypting that envelope. It is not your persistent MessageBox inbox address. |
 
-For a MessageBox send to another person, obtain both their **Crypton receiving key** and their **ME wallet identity**. Encryption uses the first; delivery uses the second. Crypton remembers public mappings entered for later deliveries.
+**My identity** now shares one public contact code/QR containing both keys. Scan it from the recipient/contact screen, paste the code into the recipient field, or import the shared text/file. Review and explicitly save the contact to retain it. Selecting that contact fills encryption and delivery destinations together. The code is a shared address-book entry, not a certificate or proof of identity; verify it with the person who shared it.
+
+Manual receiving-key entry and **Copy receiving key only** remain available for older clients. For MessageBox sends, also enter that recipient's delivery wallet key. Existing saved contacts and mappings continue to work. New contact exports carry both keys when known; older contacts without a delivery key still export as vCards.
 
 The SocialCert search flow below instead selects a certified **wallet identity** for both encryption and delivery. V2's compatible wallet-decryption path opens these messages; the usual app-derived receiving-key workflow remains available.
 
@@ -93,7 +97,7 @@ Search uses SDK `IdentityClient` over the connected wallet's `discoverByAttribut
 
 One explicit search returns up to **20 certificates**. Refine the query for more specific results. Editing the query clears its previous results. Empty matches are distinguished from denied, unavailable or malformed wallet responses; cancelled searches cannot select a recipient. Search text and certificate results are held in memory. Saved contacts persist only when you choose to save them.
 
-Native ME and compatible BRC-100 JSON wallets support this flow. The original portal does not implement certificate discovery. No certificate issuance, publication or payment is requested by recipient search. Existing manual key, QR and contact entry remains available. Contact vCard export carries its public key; it does not export certification evidence or mark the imported contact as newly certified.
+Native ME and compatible BRC-100 JSON wallets support this flow. The original portal does not implement certificate discovery. No certificate issuance, publication or payment is requested by recipient search. Existing manual key, QR and contact entry remains available. Contact export carries public receiving/delivery keys where available; it does not export certification evidence or mark the imported contact as newly certified.
 
 See [Babbage's certificate/discovery guide](https://docs.projectbabbage.com/docs/guides/wallet/certificates), [the SDK identity reference](https://bsv-blockchain.github.io/ts-sdk/reference/identity/) and [Crypton's search verification with screenshot](docs/RECIPIENT_SEARCH.md). The automated search checks use disposable wallet responses and do not establish availability of the live SocialCert directory.
 
@@ -101,13 +105,13 @@ See [Babbage's certificate/discovery guide](https://docs.projectbabbage.com/docs
 
 ### Send a v2 message
 
-1. Select **New message**.
-2. Choose **Myself**, find a certified wallet identity with **Search**, enter the recipient's Crypton receiving key, or select a saved contact.
-3. Enter the plaintext and choose **Encrypt message**. Complete any ME requests and return to Crypton.
-4. Share the resulting encrypted text or QR image, or choose **Send with MessageBox**.
-5. For MessageBox, enter the recipient's ME wallet identity, choose **Check delivery fee**, and review the quote.
-6. Choose **Review payment in wallet and send**, review ME's full payment total, and approve it only if it matches your intended send.
-7. Return to Crypton to complete delivery. The outbox retains the encrypted payload, payment state and acceptance receipt.
+1. Select **New message** and choose **Myself**, a saved contact, a shared Crypton contact code, or an explicitly selected certified identity.
+2. Write the message. A contact code fills the receiving and delivery wallet keys together; manual-key recipients must supply the delivery key separately.
+3. Choose **Send with MessageBox** in the composer. Crypton encrypts locally and saves the delivery record, then checks and revalidates fees within one ME session.
+4. Review the **full total in ME**, including the server/recipient fees and wallet costs. Approve the one-time payment only if it matches your intended send; a standing spending limit is optional and not required.
+5. Keep ME open through submission. It returns automatically after completion. **SENT / Accepted by MessageBox** confirms server acceptance; recipient decryption is a separate check.
+
+For text/QR sharing instead, choose **Encrypt message**. The separate quote/review route remains available from that result and for existing drafts. Errors and uncertain payments retain their recovery record; use that record rather than creating another payment.
 
 Use **Myself** for both encryption and delivery when sending to your own active wallet. New v2 messages use a fresh one-use sender key. Keep your own plaintext copy if you need to retain it; an outgoing message for another recipient is intended to be opened by that recipient.
 
@@ -125,7 +129,7 @@ Crypton accepts encrypted payloads through:
 
 Choose **Decrypt message**, approve the wallet operation in ME when requested, and return to see the plaintext. V2 supplies its sender key in the envelope. Wrong recipients fail to decrypt.
 
-Incoming shares are queued in the app's shared container. Open Crypton to import the next item. **Settings → Import next shared message** handles additional queued items. The share extension supports encrypted text or one selected image; use the contact/recipient identity controls to import public identity QR codes.
+Incoming shares are queued in the app's shared container. Open Crypton to import the next item. **Settings → Import next shared message** handles additional queued items. The share extension accepts encrypted text, validated public contact-code text or one selected image. Imported contact codes open a contact review; they are never saved or selected silently.
 
 ## MessageBox inbox
 

@@ -13,6 +13,7 @@ import WebKit
     private var delivery: (id: String, action: String)?
     private var discovery: (method:String,args:JSON)?
     private var discoveryRequested = false
+    private var sharingIdentity = false
     private var timer: Task<Void,Never>?
     private var http: BoundedHTTP?
     var progress: ((String) -> Void)?
@@ -36,7 +37,7 @@ import WebKit
             if peer != "self" { _ = try Wire.identity(peer) }
             guard !text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty, text.utf16.count <= 16_000 else { throw CryptonError("Enter a message of at most 16,000 characters.") }
         }
-        delivery = nil; discovery = nil; inboxSession = nil
+        delivery = nil; discovery = nil; inboxSession = nil; sharingIdentity = action == "contactIdentity"
         return try await start("runCrypto", request:["action":action,"text":text,"peer":peer])
     }
     func search(_ query:String) async throws -> [DiscoveredIdentity] {
@@ -50,6 +51,14 @@ import WebKit
         try store.begin(id,action:action); delivery = (id,action); discovery = nil; inboxSession = nil
         do { return try await start("runDelivery",request:["action":action,"record":try store.get(id)]) }
         catch { try? store.saveError(id,error); throw error }
+    }
+    /// One native ME visit covers quotation, revalidation and the final wallet review.
+    /// Each phase still uses the existing journal and wallet/HTTP validators.
+    func prepareAndSend(_ id:String) async throws -> Any {
+        let me = wallet as? MEWallet
+        me?.beginOperation(); defer { me?.endOperation() }
+        _ = try await deliver("prepare",id:id)
+        return try await deliver("send",id:id)
     }
     func inbox(_ action:String,wallet:String = "",id:String = "",offset:Int = 0,layer:String = "") async throws -> JSON {
         guard pending == nil else { throw CryptonError("Another Crypton request is in progress.") }
@@ -80,7 +89,7 @@ import WebKit
     }
     private func finish(_ result: Result<Any,Error>) {
         (wallet as? MEWallet)?.endOperation()
-        let done = pending; pending = nil; operation = nil; queued = nil; discovery = nil; inboxSession = nil; timer?.cancel(); timer = nil
+        let done = pending; pending = nil; operation = nil; sharingIdentity = false; queued = nil; discovery = nil; inboxSession = nil; timer?.cancel(); timer = nil
         done?.resume(with:result)
     }
     func cancel(reason: String = "Crypton request cancelled. Your draft is still here.") {
@@ -110,6 +119,9 @@ import WebKit
                     discoveryRequested = true
                     value = try RecipientDiscovery.response(await wallet.call(search.method,search.args,raw:true),search.args)
                 case "wallet":
+                    if sharingIdentity, data["call"] as? String == "getPublicKey", sameJSON(data["args"],["identityKey":true]) {
+                        value = try await wallet.call("getPublicKey",["identityKey":true],raw:false); break
+                    }
                     guard let method = data["call"] as? String, let args = data["args"] as? JSON,
                           ["createHmac","decrypt"].contains(method), sameJSON(args["protocolID"],[2,"crypton"]), args["keyID"] as? String == "1" else { throw CryptonError("Unsupported engine wallet operation.") }
                     if method == "createHmac" {

@@ -69,6 +69,11 @@ window.runCrypto = async request => {
   try {
     let result;
     if (request.action === 'identity') result = (await identity(operation)).publicKey;
+    else if (request.action === 'contactIdentity') {
+      const own = await identity(operation);
+      const walletIdentity = await wallet(operation,'getPublicKey',{identityKey:true});
+      result = {receivingKey:own.publicKey,walletIdentity};
+    }
     else if (request.action === 'seal') {
       const recipient = request.peer === 'self' ? (await identity(operation)).publicKey : request.peer;
       live(operation);

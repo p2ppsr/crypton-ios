@@ -7,6 +7,7 @@ struct PublicContact: Codable, Identifiable, Equatable {
     var key: String
     var walletIdentity: String? = nil
     var id: String { key }
+    var shareText:String { (try? walletIdentity.map { try Wire.contactCode(name:name,key:key,wallet:$0) }) ?? key }
 }
 enum Screen { case home, recipient, compose, result, contacts, settings, guide, outbox, delivery, inbox, inboxMessage }
 
@@ -16,14 +17,21 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     @Published var activity = "Working…"
     @Published var error: String?
     @Published var status = "Connect your wallet"
+    var statusReady:Bool {
+        !busy && ["Wallet connected","Inbox up to date","Message decrypted · copy retained","MessageBox delivery complete","Message encrypted","Message decrypted","Private message opened","Message removed"].contains(status)
+    }
     @Published var portalVisible = false
     @Published var decrypting = false
     @Published var message = ""
     @Published var ciphertext = ""
     @Published var peer = "self"
     @Published var peerName = "Myself"
-    @Published var keyDraft = ""
+    @Published var keyDraft = "" { didSet { if keyDraft != oldValue { recipientWalletDraft = "" } } }
     @Published var contactName = ""
+    @Published var contactWalletDraft = ""
+    @Published var recipientWalletDraft = ""
+    @Published var sharedIdentity:PublicContact?
+    var identityShareText:String { sharedIdentity?.shareText ?? output }
     @Published var recipientQuery = "" { didSet { if recipientQuery != oldValue { clearSearch() } } }
     @Published private(set) var searchResults: [DiscoveredIdentity] = []
     @Published private(set) var searchCompleted = false
@@ -114,7 +122,7 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
         status = "Connect your wallet"; portalVisible = false
         if ["me","me-bob"].contains(walletMode) {
             let me = MEWallet(scheme:walletMode == "me-bob" ? "metanet-bob" : "metanet")
-            me.progress = { [weak self] value in self?.activity = value; self?.status = value }
+            me.progress = { [weak self] value in guard let self = self, self.busy else { return }; self.activity = value; self.status = value }
             wallet = me
         } else if walletMode == "portal" {
             let portal = PortalWallet(); portal.visibility = { [weak self] show in self?.portalVisible = show }; wallet = portal
@@ -141,7 +149,7 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     private func crypto() throws -> CryptoEngine {
         if let engine = engine { return engine }
         let engine = CryptoEngine(wallet:try connection(),store:store,inbox:inboxStore)
-        engine.progress = { [weak self] value in self?.activity = value; self?.status = value }
+        engine.progress = { [weak self] value in guard let self = self, self.busy else { return }; self.activity = value; self.status = value }
         self.engine = engine; return engine
     }
     func perform(_ work: @escaping @MainActor () async throws -> Void) {
@@ -165,10 +173,14 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
         decrypting = decrypt; keyDraft = peer == "self" ? "" : peer
         screen = decrypt ? .compose : .recipient
     }
-    func choose(_ key: String, name: String = "Selected identity") {
+    func choose(_ key: String, name: String = "Selected identity", walletIdentity:String? = nil) {
         do {
-            let key = key == "self" ? key : try Wire.identity(key)
-            peer = key; peerName = name; peerWalletIdentity = nil; selectedIdentity = nil; recipientSaved = false; screen = .compose
+            let code = Wire.isContact(key) ? try Wire.contact(key) : nil
+            let key = try code?.key ?? (key == "self" ? key : Wire.identity(key))
+            let deliveryKey = try (code?.wallet ?? walletIdentity).map { try Wire.identity($0) }
+            peer = key; peerName = code?.name ?? name; peerWalletIdentity = deliveryKey
+            recipientWalletDraft = deliveryKey ?? (defaults.dictionary(forKey:"deliveryKeys") as? [String:String])?[key] ?? ""
+            selectedIdentity = nil; recipientSaved = false; screen = .compose
         }
         catch { self.error = error.localizedDescription }
     }
@@ -189,13 +201,13 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     func chooseDiscovered(_ identity:DiscoveredIdentity) {
         guard !busy, searchCompleted, searchResults.contains(identity) else { error = "Search again and select a current recipient."; return }
         choose(identity.key,name:String(identity.name.prefix(120)))
-        peerWalletIdentity = identity.key; selectedIdentity = identity; legacySenderSelected = true
+        peerWalletIdentity = identity.key; recipientWalletDraft = identity.key; selectedIdentity = identity; legacySenderSelected = true
     }
     func chooseContact(_ contact:PublicContact) {
         do {
             let key = try Wire.identity(contact.key)
             let walletKey = try contact.walletIdentity.map { try Wire.identity($0) }
-            choose(key,name:contact.name)
+            choose(key,name:contact.name,walletIdentity:walletKey)
             peerWalletIdentity = walletKey; legacySenderSelected = true
         } catch { self.error = error.localizedDescription }
     }
@@ -207,10 +219,12 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
             recipientSaved = true
         } catch { self.error = error.localizedDescription }
     }
-    func process() {
+    func process(sendWithMessageBox:Bool = false) {
         // Raw ciphertext always requires an explicit sender selection, including imported files.
         if decrypting && !Wire.isEnvelope(ciphertext) && !legacySenderSelected { screen = .recipient; return }
         perform { [self] in
+            let me = sendWithMessageBox ? wallet as? MEWallet : nil
+            me?.beginOperation(); defer { me?.endOperation() }
             sound.effect(encrypt:!decrypting); layerNote = ""
             if !decrypting && !legacy {
                 output = try await crypto().run("seal",text:message,peer:peer) as? String ?? ""
@@ -226,19 +240,45 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
                 output = result; outputKind = decrypting ? "message" : "encrypted"
             }
             screen = .result
-            if decrypting || legacy || peer == "self" { status = "Wallet connected" }
+            if sendWithMessageBox {
+                guard !decrypting, !legacy else { throw CryptonError("MessageBox requires a Crypton v2 message.") }
+                if peer != "self" {
+                    peerWalletIdentity = try Wire.identity(recipientWalletDraft)
+                    var saved = defaults.dictionary(forKey:"deliveryKeys") as? [String:String] ?? [:]
+                    saved[peer] = peerWalletIdentity; defaults.set(saved,forKey:"deliveryKeys")
+                }
+                newDelivery()
+                guard screen == .delivery else { throw CryptonError(error ?? "Could not prepare this delivery.") }
+                do { _ = try await crypto().prepareAndSend(deliveryID) }
+                catch {
+                    if disappearSend, let marker = try? store.get(deliveryID), DeliveryStore.discarded(marker) { wipeSentMessage() }
+                    throw error
+                }
+                if disappearSend, !FileManager.default.fileExists(atPath:store.directory.appendingPathComponent(deliveryID+".json").path) { wipeSentMessage() }
+                else { status = "MessageBox delivery complete" }
+            } else { status = decrypting ? "Message decrypted" : "Message encrypted" }
         }
     }
     @Published var legacySenderSelected = false
     func identity(root: Bool = false) {
         perform { [self] in
-            let result = (legacy || root) ? try await connection().call("getPublicKey",["identityKey":true],raw:false) : try await crypto().run("identity")
-            output = try Wire.identity(result as? String ?? ""); outputKind = root ? "walletIdentity" : "identity"; screen = .result; status = "Wallet connected"
+            let result:Any
+            sharedIdentity = nil
+            if !legacy && !root {
+                guard let card = try await crypto().run("contactIdentity") as? JSON else { throw CryptonError("Invalid contact identity.") }
+                let receiving = try Wire.identity(card["receivingKey"] as? String ?? "")
+                let delivery = try Wire.identity(card["walletIdentity"] as? String ?? "")
+                sharedIdentity = PublicContact(name:"Crypton contact",key:receiving,walletIdentity:delivery)
+                result = receiving
+            } else { result = try await connection().call("getPublicKey",["identityKey":true],raw:false) }
+            output = try Wire.identity(result as? String ?? "")
+            outputKind = root ? "walletIdentity" : "identity"; screen = .result; status = "Wallet connected"
         }
     }
     @discardableResult func importMessage(_ value: String) -> Bool {
         do {
             guard value.utf8.count <= 100_000 else { throw CryptonError("Payload too large.") }
+            if Wire.isContact(value) { try importIdentity(value); screen = .contacts; return true }
             if Wire.isEnvelope(value) { _ = try Wire.envelope(value) }
             else { _ = try Wire.legacy(value,peer:"self",encrypt:false) }
             ciphertext = value; decrypting = true; legacySenderSelected = false; output = ""; layerNote = ""
@@ -260,13 +300,25 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
             else { return importMessage(try String(contentsOf:url,encoding:.utf8)) }
         } catch { self.error = error.localizedDescription; return false }
     }
+    func importIdentity(_ text:String) throws {
+        if Wire.isContact(text) {
+            let card = try Wire.contact(text)
+            keyDraft = card.key; contactWalletDraft = card.wallet
+            if screen != .contacts || contactName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty { contactName = card.name }
+            recipientWalletDraft = card.wallet
+        } else { keyDraft = try Wire.identity(text); contactWalletDraft = ""; recipientWalletDraft = "" }
+    }
     func saveContact() {
         do {
             let name = contactName.trimmingCharacters(in:.whitespacesAndNewlines)
             guard !name.isEmpty, name.count <= 120 else { throw CryptonError("Enter a contact name of at most 120 characters.") }
-            let key = try Wire.identity(keyDraft)
-            var updated = contacts.filter { $0.key != key }; updated.append(PublicContact(name:name,key:key)); updated.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-            try persistContacts(updated); contactName = ""; keyDraft = ""
+            let card = Wire.isContact(keyDraft) ? try Wire.contact(keyDraft) : nil
+            let key = try card?.key ?? Wire.identity(keyDraft)
+            let walletText = card?.wallet ?? contactWalletDraft.trimmingCharacters(in:.whitespacesAndNewlines)
+            let deliveryKey = walletText.isEmpty ? nil : try Wire.identity(walletText)
+            if let deliveryKey = deliveryKey { _ = try Wire.contactCode(name:name,key:key,wallet:deliveryKey) }
+            var updated = contacts.filter { $0.key != key }; updated.append(PublicContact(name:name,key:key,walletIdentity:deliveryKey)); updated.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            try persistContacts(updated); contactName = ""; keyDraft = ""; contactWalletDraft = ""
         } catch { self.error = error.localizedDescription }
     }
     func deleteContact(_ contact: PublicContact) { do { try persistContacts(contacts.filter { $0.key != contact.key }) } catch { self.error = error.localizedDescription } }
@@ -283,7 +335,9 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
         do {
             guard outputKind == "encrypted", Wire.isEnvelope(output) else { throw CryptonError("Create a v2 message before using MessageBox.") }
             let saved = defaults.dictionary(forKey:"deliveryKeys") as? [String:String] ?? [:]
-            let recipient = peer == "self" ? "self" : peerWalletIdentity ?? saved[peer] ?? peer
+            let draft = recipientWalletDraft.trimmingCharacters(in:.whitespacesAndNewlines)
+            let entered = draft.isEmpty ? nil : try Wire.identity(draft)
+            let recipient = peer == "self" ? "self" : entered ?? peerWalletIdentity ?? saved[peer] ?? peer
             deliveryID = try store.create(envelope:output,key:peer,recipient:recipient,name:peerName,disappear:disappearSend)
             deliveryRecipient = recipient == "self" ? "" : recipient; screen = .delivery
         } catch { self.error = error.localizedDescription }
@@ -389,10 +443,13 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
                     inboxNotice = "Retrieved \(integer(result["count"]) ?? 0) Crypton message(s). \(integer(result["skipped"]) ?? 0) other or unreadable notification(s) left untouched."
                     clearInboxView(); screen = .inbox
                 }
+                if action == "refresh" { status = "Inbox up to date" }
+                else if action == "open" || action == "layer" { status = privateInboxView ? "Private message opened" : "Message decrypted · copy retained" }
+                else { status = privateRemoved || action == "remove" ? "Message removed" : "Server removal pending" }
                 loadInbox(); scheduleRemovalRetry(30)
             } catch {
                 if ["remove","openDiscard"].contains(action) {
-                    inboxNotice = "Server removal pending. " + error.localizedDescription; loadInbox()
+                    inboxNotice = "Server removal pending. " + error.localizedDescription; status = "Server removal pending"; loadInbox()
                     removalNeedsWallet = Self.needsWallet(error.localizedDescription); scheduleRemovalRetry(60)
                 }
                 if !automatic { throw error }

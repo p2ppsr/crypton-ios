@@ -31,6 +31,42 @@ final class CryptonUITests: XCTestCase {
         }
         return (app,(seeded["ids"] as! [String])[0])
     }
+    @MainActor func testContactCodeEntryPreservesQuotesAndFillsBothKeys() throws {
+        let receiving = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        let delivery = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+        let code = String(decoding:try JSONSerialization.data(withJSONObject:["protocol":"crypton-contact","version":1,"name":"Peer iOS","receivingKey":receiving,"walletIdentity":delivery],options:[.sortedKeys]),as:UTF8.self)
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting"]; app.launch()
+        app.buttons["New message"].tap()
+        let entry = app.textViews["Identity public key"]; XCTAssertTrue(entry.waitForExistence(timeout:5))
+        entry.tap(); entry.typeText(code)
+        XCTAssertEqual(entry.value as? String,code,"iOS input traits must preserve literal contact-code JSON")
+        let done = app.buttons["keyInputDone"]; XCTAssertTrue(done.waitForExistence(timeout:3)); done.tap()
+        app.buttons["Continue"].tap()
+        XCTAssertTrue(app.staticTexts["To: Peer iOS"].waitForExistence(timeout:5))
+        let wallet = app.textViews["Recipient delivery wallet key"]
+        XCTAssertEqual(wallet.value as? String,delivery)
+        XCTAssertTrue(app.buttons["Send with MessageBox"].exists)
+    }
+    @MainActor func testSingleSendActionRetainsConfirmedRecordAndCompletionStatus() async throws {
+        let before:Int
+        do { before = (try await fixture("delivery-stats")["payments"] as? NSNumber)?.intValue ?? 0 }
+        catch { throw XCTSkip("Start disposable MessageBox fixtures") }
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting","--sdk-wallet-fixture","--messagebox-fixture","--reset-qa-outbox"]
+        app.launch()
+        app.buttons["New message"].tap(); app.buttons["Myself"].tap()
+        let editor = app.textViews["messageEditor"]; XCTAssertTrue(editor.waitForExistence(timeout:5))
+        editor.tap(); editor.typeText("Recorded fixture send: 2026-11-01 UTC. Retain this normal encrypted test.")
+        app.buttons["Send with MessageBox"].tap()
+        XCTAssertTrue(app.staticTexts["SENT"].waitForExistence(timeout:60))
+        XCTAssertTrue(app.staticTexts["Accepted by MessageBox"].exists)
+        XCTAssertEqual(app.buttons["walletStatus"].label,"MessageBox delivery complete")
+        let after = (try await fixture("delivery-stats")["payments"] as? NSNumber)?.intValue ?? 0
+        XCTAssertEqual(after,before+1)
+        app.terminate(); app.launchArguments = ["--uitesting","--sdk-wallet-fixture","--messagebox-fixture"]; app.launch()
+        app.buttons["MessageBox outbox"].tap()
+        XCTAssertTrue(app.buttons["Myself · SENT"].waitForExistence(timeout:5))
+    }
     @MainActor func testNativeInboxReceiveDecryptDismissAndRestore() async throws {
         let (app,id) = try await inboxApp()
         app.buttons["MessageBox inbox"].tap(); app.buttons["Refresh inbox"].tap()
@@ -38,6 +74,7 @@ final class CryptonUITests: XCTestCase {
         app.buttons["Decrypt message"].tap()
         XCTAssertTrue(app.staticTexts["inboxPlaintext"].waitForExistence(timeout:30))
         XCTAssertEqual(app.staticTexts["inboxPlaintext"].label,"Android inbox fixture message 0")
+        XCTAssertEqual(app.buttons["walletStatus"].label,"Message decrypted · copy retained")
         let screenshot = XCTAttachment(screenshot:app.screenshot()); screenshot.name = "Native inbox decrypted disposable message"; screenshot.lifetime = .keepAlways; add(screenshot)
         app.buttons["Dismiss on this device"].tap()
         XCTAssertFalse(row.exists); app.switches["Show dismissed messages"].tap(); XCTAssertTrue(row.exists); row.tap()

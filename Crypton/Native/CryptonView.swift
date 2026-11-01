@@ -29,7 +29,7 @@ struct CryptonView: View {
                     Button { model.screen = .settings } label: { Image(systemName:"gearshape").font(.title3) }.accessibilityLabel("Settings")
                 }.padding(.horizontal,24).padding(.vertical,18)
                 Button { model.connect() } label: {
-                    HStack { Circle().fill(model.status == "Wallet connected" ? mint : .orange).frame(width:7,height:7); Text(model.status).font(.footnote); Spacer(); Image(systemName:"arrow.up.right") }
+                    HStack { Circle().fill(model.statusReady ? mint : .orange).frame(width:7,height:7); Text(model.status).font(.footnote); Spacer(); Image(systemName:"arrow.up.right") }
                         .foregroundStyle(.white.opacity(0.7)).padding(14).background(panel,in:RoundedRectangle(cornerRadius:10))
                 }.padding(.horizontal,24).padding(.bottom,10).accessibilityIdentifier("walletStatus")
                 ScrollView {
@@ -99,8 +99,15 @@ struct CryptonView: View {
     private func action(_ title:String,_ icon:String = "arrow.right",primary:Bool = false,_ work:@escaping () -> Void) -> some View {
         Button(action:work) { HStack(spacing:14) { Image(systemName:icon).frame(width:22); Text(title).fontWeight(.semibold); Spacer(); Image(systemName:"chevron.right").font(.caption) }.padding(18).frame(maxWidth:.infinity).foregroundStyle(primary ? Color.black : .white).background(primary ? mint : panel,in:RoundedRectangle(cornerRadius:14)) }
     }
-    private func textField(_ label:String,_ value:Binding<String>,key:Bool = false) -> some View {
-        TextField(label,text:value,axis:.vertical).font(key ? .system(.body,design:.monospaced) : .body).textInputAutocapitalization(.never).autocorrectionDisabled().padding(16).background(panel,in:RoundedRectangle(cornerRadius:12)).accessibilityLabel(label)
+    @ViewBuilder private func textField(_ label:String,_ value:Binding<String>,key:Bool = false) -> some View {
+        if key {
+            ZStack(alignment:.topLeading) {
+                if value.wrappedValue.isEmpty { Text(label).foregroundStyle(.secondary).padding(.top,8).padding(.leading,5).allowsHitTesting(false) }
+                MessageEditor(text:value,label:label).frame(height:value.wrappedValue.isEmpty ? 38 : 78)
+            }.padding(12).background(panel,in:RoundedRectangle(cornerRadius:12))
+        } else {
+            TextField(label,text:value,axis:.vertical).font(.body).textInputAutocapitalization(.never).autocorrectionDisabled().padding(16).background(panel,in:RoundedRectangle(cornerRadius:12)).accessibilityLabel(label)
+        }
     }
     private func selectable(_ value:String) -> some View {
         Text(value).font(.system(.footnote,design:.monospaced)).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading).padding(16).background(panel,in:RoundedRectangle(cornerRadius:12))
@@ -134,7 +141,8 @@ struct CryptonView: View {
             action("Myself","person",primary:true) { model.legacySenderSelected = true; model.choose("self",name:"Myself") }
             if !model.decrypting { recipientSearch }
             textField("Identity public key",$model.keyDraft,key:true)
-            action("Continue",primary:true) { model.legacySenderSelected = true; model.choose(model.keyDraft) }
+            Text("Paste a Crypton contact code to include both receiving and delivery keys, or enter a public key.").font(.footnote).foregroundStyle(.secondary)
+            action("Continue",primary:true) { model.legacySenderSelected = true; model.choose(model.keyDraft,name:model.contactName.isEmpty ? "Selected identity" : model.contactName,walletIdentity:model.recipientWalletDraft.isEmpty ? nil : model.recipientWalletDraft) }
             identityImports
             ForEach(model.contacts) { contact in action(contact.name,"person.crop.circle") { model.chooseContact(contact) } }
             back(model.decrypting ? .compose : .home)
@@ -192,7 +200,15 @@ struct CryptonView: View {
                 action("Import QR image","photo") { scanIdentity = false; modal = .photo }
                 Button("Import encrypted file") { filePicker = true }
             }
-            action(model.decrypting ? "Decrypt message" : "Encrypt message",model.decrypting ? "lock.open" : "lock",primary:true) { model.process() }
+            if !model.decrypting && !model.legacy {
+                if model.peer != "self" {
+                    textField("Recipient delivery wallet key",$model.recipientWalletDraft,key:true)
+                    Text("A shared Crypton contact fills this automatically. This public key identifies the recipient’s MessageBox inbox.").font(.footnote).foregroundStyle(.secondary)
+                }
+                action("Send with MessageBox","paperplane",primary:true) { model.process(sendWithMessageBox:true) }
+                Text("Encrypts your message, checks delivery fees and opens ME once for the full payment review. Keep ME open until Crypton returns.").font(.footnote).foregroundStyle(.secondary)
+            }
+            action(model.decrypting ? "Decrypt message" : "Encrypt message",model.decrypting ? "lock.open" : "lock",primary:model.decrypting || model.legacy) { model.process() }
             Text(model.decrypting ? "Nested messages open one layer at a time." : model.legacy ? "Legacy format · protocol [1, crypton]" : "Crypton v2 · each seal uses a fresh sender key. Keep your plaintext copy if you need it later.").font(.footnote).foregroundStyle(.secondary)
             back()
         }
@@ -208,21 +224,27 @@ struct CryptonView: View {
                 action("Open inner layer","lock.open",primary:true) { model.openInner() }
             }
             if identity || (encrypted && !model.disappearSend) {
-                if let image = QRTools.image(model.output) {
+                if let image = QRTools.image(model.outputKind == "identity" ? model.identityShareText : model.output) {
                     Image(uiImage:image).interpolation(.none).resizable().scaledToFit().frame(maxHeight:300).frame(maxWidth:.infinity).accessibilityLabel(identity ? "Identity QR code" : "Encrypted QR code")
                     action("Share QR image","square.and.arrow.up") { modal = .share(SharedItems(items:[image])) }
                 } else { Text("This message is too large for one QR code. Share the encrypted text instead.").foregroundStyle(.secondary) }
             }
             if model.disappearSend && encrypted { Text(model.output).font(.system(.footnote,design:.monospaced)).accessibilityIdentifier("resultText") }
             else { selectable(model.output).accessibilityIdentifier("resultText") }
-            if model.outputKind == "identity" { Text(model.legacy ? "Legacy mode shares your wallet identity. Use the same format as your sender." : "Your app-only Crypton receiving key. Share it with people who want to send you v2 messages.").font(.footnote).foregroundStyle(.secondary) }
+            if model.outputKind == "identity" {
+                Text(model.legacy ? "Legacy mode shares your wallet identity. Use the same format as your sender." : "Share this contact QR or text. It contains both public keys needed to encrypt and deliver a message to you.").font(.footnote).foregroundStyle(.secondary)
+                if let walletKey = model.sharedIdentity?.walletIdentity {
+                    DisclosureGroup("Delivery wallet key") { selectable(walletKey) }
+                    Button("Copy receiving key only") { model.copyText(model.output) }
+                }
+            }
             if model.outputKind == "walletIdentity" { Text("For MessageBox delivery, share this wallet identity separately from your Crypton receiving key.").font(.footnote).foregroundStyle(.secondary) }
             if identity || !model.disappearSend {
             action(copied ? "Copied" : "Copy text","doc.on.doc") {
-                model.copyText(model.output)
+                model.copyText(model.outputKind == "identity" ? model.identityShareText : model.output)
                 copied = true; DispatchQueue.main.asyncAfter(deadline:.now()+2) { copied = false }
             }
-            action("Share text","square.and.arrow.up") { modal = .share(SharedItems(items:[model.output])) }
+            action("Share text","square.and.arrow.up") { modal = .share(SharedItems(items:[model.outputKind == "identity" ? model.identityShareText : model.output])) }
             }
             if model.outputKind == "encrypted" && Wire.isEnvelope(model.output) { action("Send with MessageBox","paperplane",primary:true) { model.newDelivery() } }
             action("Done","checkmark",primary:true) { model.done() }
@@ -235,12 +257,14 @@ struct CryptonView: View {
                 VStack(alignment:.leading,spacing:10) {
                     Button(contact.name) { model.chooseContact(contact) }
                     Text(contact.key).font(.system(.caption,design:.monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
+                    if contact.walletIdentity != nil { Label("Encryption and delivery keys saved",systemImage:"checkmark.circle").font(.caption).foregroundStyle(mint) }
                     HStack { Button("Export contact") { export(contact) }; Spacer(); Button("Delete",role:.destructive) { model.deleteContact(contact) } }.font(.caption)
                 }.padding(16).background(panel,in:RoundedRectangle(cornerRadius:12))
             }
             if model.contacts.isEmpty { Text("No contacts yet. Add a friend’s receiving key below.").foregroundStyle(.secondary) }
             textField("Contact name",$model.contactName)
             textField("Identity public key",$model.keyDraft,key:true)
+            textField("Delivery wallet key (optional)",$model.contactWalletDraft,key:true)
             identityImports
             action("Save contact","person.badge.plus",primary:true) { model.saveContact() }
             action("Import phone contact","person.crop.rectangle") { modal = .contacts }
@@ -414,13 +438,14 @@ struct CryptonView: View {
         modal = nil
         switch value {
         case .success(let text):
-            if scanIdentity { do { model.keyDraft = try Wire.identity(text) } catch { model.error = error.localizedDescription } }
+            if scanIdentity { do { try model.importIdentity(text) } catch { model.error = error.localizedDescription } }
             else { model.importMessage(text) }
         case .failure(let error): model.error = error.localizedDescription
         }
     }
     private func export(_ contact:PublicContact) {
         do {
+            if contact.walletIdentity != nil { modal = .share(SharedItems(items:[contact.shareText])); return }
             let c = CNMutableContact(); c.givenName = contact.name; c.urlAddresses = [CNLabeledValue(label:"Crypton",value:contact.key as NSString)]
             let data = try CNContactVCardSerialization.data(with:[c])
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("crypton-contact.vcf")

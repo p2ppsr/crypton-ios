@@ -15,6 +15,7 @@ import CryptoKit
     private var background: UIBackgroundTaskIdentifier = .invalid
     private var starting = false
     private var session = false
+    private var operationDepth = 0
     private var sessionFinished = false
     private var closeTimer: Task<Void,Never>?
     var progress: ((String) -> Void)?
@@ -42,9 +43,11 @@ import CryptoKit
     }
     var pairingCode:String { (try? NativeWalletPairing.code()) ?? "Unavailable" }
     /// Keep one capability page alive across the validated engine operation.
-    func beginOperation() { if sessionFinished { closeSession() }; session = true; sessionFinished = false; closeTimer?.cancel() }
+    func beginOperation() { if sessionFinished { closeSession() }; operationDepth += 1; session = true; sessionFinished = false; closeTimer?.cancel() }
     func endOperation() {
         guard session else { return }
+        operationDepth = max(0,operationDepth - 1)
+        guard operationDepth == 0 else { return }
         sessionFinished = true; command = nil; waiting?(false)
         if foreground() { closeSession(); return }
         // Give the ME page time to observe completion and request its exact callback.
@@ -144,7 +147,7 @@ import CryptoKit
         waiting?(false); done?.resume(with:result)
     }
     private func closeSession() {
-        generation = UUID(); starting = false; session = false; sessionFinished = false
+        generation = UUID(); starting = false; session = false; sessionFinished = false; operationDepth = 0
         command = nil; response = nil; token = ""; origin = ""; id = ""
         closeTimer?.cancel(); closeTimer = nil; timer?.cancel(); timer = nil
         server?.stop(); server = nil

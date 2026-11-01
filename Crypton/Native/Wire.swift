@@ -65,6 +65,22 @@ private struct Field: Equatable, Comparable {
 }
 
 enum Wire {
+    static func isContact(_ text:String) -> Bool { (try? object(Data(text.utf8)))?["protocol"] as? String == "crypton-contact" }
+    static func contact(_ text:String) throws -> (name:String,key:String,wallet:String) {
+        guard text.utf8.count <= 2048 else { throw CryptonError("Contact code exceeds 2 KB.") }
+        let value = try object(Data(text.utf8))
+        guard Set(value.keys) == Set(["protocol","version","name","receivingKey","walletIdentity"]),
+              value["protocol"] as? String == "crypton-contact", integer(value["version"]) == 1,
+              let name = value["name"] as? String, !name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
+              name.count <= 120, !name.unicodeScalars.contains(where:{ $0.value < 32 || $0.value == 127 }),
+              let key = value["receivingKey"] as? String, let wallet = value["walletIdentity"] as? String else { throw CryptonError("Invalid Crypton contact code.") }
+        return (name,try identity(key),try identity(wallet))
+    }
+    static func contactCode(name:String,key:String,wallet:String) throws -> String {
+        let text = try jsonString(["protocol":"crypton-contact","version":1,"name":name,"receivingKey":key,"walletIdentity":wallet])
+        _ = try contact(text); return text
+    }
+
     static let maxPayload = 64_000
     static func identity(_ value: String) throws -> String {
         let key = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
