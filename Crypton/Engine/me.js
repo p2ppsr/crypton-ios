@@ -2,10 +2,10 @@
 const statusText = document.getElementById('status'), returnLink = document.getElementById('return');
 const sent = new Set(), received = new Set();
 const allowed = new Set(['isAuthenticated','waitForAuthentication','getPublicKey','getNetwork','encrypt','decrypt','createHmac','verifyHmac','createSignature','verifySignature','createAction','listActions','discoverByAttributes','discoverByIdentityKey']);
-let current = null, stopped = false, returning = false, saving = false, returnAttempts = 0;
+let current = null, stopped = false, returning = false, saving = false, returnAttempts = 0, pendingResponse = null;
 const visible = () => !document.hidden;
 function returnToApp() {
-  if (!visible() || (current && !saving) || returning || returnAttempts >= 8) return;
+  if (!visible() || (current && !saving && !pendingResponse) || returning || returnAttempts >= 8) return;
   returning = true; returnAttempts++;
   // Updated ME validates this callback against UIKit's attributed source app and
   // refuses to leave while a native wallet prompt is active. No result is in it.
@@ -13,8 +13,16 @@ function returnToApp() {
   // Native ME owns app switching. A delayed location.href fallback can navigate
   // an obsolete localhost page or interrupt the next payment/signature prompt.
 }
-document.addEventListener?.('visibilitychange', () => { if (visible() && stopped && !returning && !returnLink.hidden) returnToApp(); });
-returnLink.addEventListener('click', event => { event.preventDefault(); if (current) return; returning=false; returnAttempts=0; returnToApp(); });
+document.addEventListener?.('visibilitychange', () => {
+  if (!visible()) return;
+  if (pendingResponse && !saving) { returning=false; returnAttempts=0; void saveResponse(); }
+  else if (stopped && !returning && !returnLink.hidden) returnToApp();
+});
+returnLink.addEventListener('click', event => {
+  event.preventDefault(); if (current && !pendingResponse) return;
+  returning=false; returnAttempts=0; returnToApp();
+  if (pendingResponse && !saving) void saveResponse();
+});
 async function boundedFetch(path, options = {}) {
   const controller = new AbortController(), timer = setTimeout(()=>controller.abort(),4000);
   try { return await fetch(path,{...options,signal:controller.signal}); } finally { clearTimeout(timer); }
@@ -25,6 +33,7 @@ window.addEventListener('message', async event => {
   try { response = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
   if (response?.type === 'CRYPTON_RETURN_STATUS') {
     if (!response.accepted) { returning=false; if (visible()) setTimeout(returnToApp,500); }
+    else if (pendingResponse && !saving) void saveResponse();
     return;
   }
   if (!response || response.type !== 'CWI' || response.isInvocation !== false || response.id !== current) return;
@@ -34,21 +43,31 @@ window.addEventListener('message', async event => {
   received.add(response.id);
   // The wallet has finished. If iOS suspended Crypton during a long approval,
   // foreground it and retry this SAME result, never re-invoke the wallet method.
-  const requestID = current; saving = true;
+  pendingResponse = response;
+  await saveResponse();
+});
+async function saveResponse() {
+  if (saving || !pendingResponse) return;
+  const response = pendingResponse, requestID = response.id; saving = true;
   for (let attempt=0; attempt<8; attempt++) {
     try {
       const saved = await boundedFetch('result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(response)});
       if (!saved.ok) throw Error();
       if (current === requestID) current = null;
-      saving = false; return;
+      pendingResponse = null; saving = false;
+      if (stopped) { stopped = false; void poll(); }
+      return;
     } catch {
       statusText.textContent = 'Approval finished. Returning to Crypton to save the result…';
       returnToApp();
       await new Promise(resolve=>setTimeout(resolve,300));
     }
   }
-  saving = false; current = null; stopped = true; returnLink.hidden = false; statusText.textContent = 'Could not save the wallet response. Return to Crypton and use its saved delivery recovery; do not pay again.';
-});
+  // Keep the terminal result in memory after bounded retries. Closing a prompt
+  // or returning manually can resume the SAME save; never re-invoke the wallet.
+  saving = false; stopped = true; returnLink.hidden = false;
+  statusText.textContent = 'The wallet result is retained on this page. Return to Crypton to save it; do not pay again.';
+}
 const labels = {
   waitForAuthentication:'Unlock ME to connect Crypton.',
   getPublicKey:'Checking the selected wallet identity…',
