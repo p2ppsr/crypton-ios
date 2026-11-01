@@ -139,7 +139,12 @@ window.runDelivery=async request=>{
       } else throw Error('Unknown delivery operation.');
       const payload={message:{recipient:p.recipient,messageBox:r.inbox,messageId:p.messageId,body:p.body},...(payment?{payment:payment.wire}:{})};
       const response=await client.fetch(r.host+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),retryCounter:1});
-      if(!response.ok)throw Error('MessageBox delivery is unconfirmed (HTTP '+response.status+'). Use the saved delivery record; do not pay again.');
+      if(!response.ok){
+        let reason='';
+        try { const failure=await response.json(); const detail=[failure?.description,failure?.message,failure?.error?.description,failure?.error?.message,failure?.error,failure?.code].find(v=>typeof v==='string'&&v.trim());
+          if(detail)reason=' '+detail.replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,180); } catch {}
+        throw Error('MessageBox delivery is unconfirmed (HTTP '+response.status+').'+reason+' Use the saved delivery record; do not pay again.');
+      }
       const accepted=receipt(await response.json(),p);
       await deliveryRpc(operation,'checkpoint',{kind:'receipt',value:accepted});result=accepted;
     }

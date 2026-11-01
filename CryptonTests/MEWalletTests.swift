@@ -443,12 +443,15 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         XCTAssertEqual(page.launches,beforeLaunches + 1,"One ME launch must serve the whole quote operation")
         let prepared = try XCTUnwrap(try store.get(id)["prepared"] as? JSON)
         XCTAssertEqual(try store.feeTotal(prepared["quote"] as! JSON),20)
-        _ = try await fixture("drop-next-delivery")
-        do { _ = try await engine.deliver("send",id:id) } catch { print("Expected interrupted delivery: " + error.localizedDescription) }
+        _ = try await fixture("reject-next-delivery")
+        do { _ = try await engine.deliver("send",id:id); XCTFail("Rejected delivery unexpectedly succeeded") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("FIXTURE_REJECTED_PAYMENT_CHECK"),"Preserve the authenticated server's reason for diagnosis") }
         let interrupted = try store.get(id)
         if interrupted["state"] as? String != "SENT" {
             XCTAssertEqual(interrupted["state"] as? String,"SUBMITTING")
-            _ = try await engine.deliver("resume",id:id)
+            _ = try await fixture("drop-next-delivery")
+            do { _ = try await engine.deliver("resume",id:id) } catch { print("Expected dropped receipt: " + error.localizedDescription) }
+            if try store.get(id)["state"] as? String != "SENT" { _ = try await engine.deliver("resume",id:id) }
         }
         XCTAssertEqual(try store.get(id)["state"] as? String,"SENT")
         do { _ = try await engine.deliver("send",id:id); XCTFail("Sent record created another payment") } catch { }

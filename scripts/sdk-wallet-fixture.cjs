@@ -107,6 +107,7 @@ const server = http.createServer(async (request, response) => {
       result={inner,envelope:await forIOS({kind:'layer',envelope:inner,note:'Outer note QA-20261030'})};
     }
     else if (request.url === '/test/drop-next-delivery') { deliveryFixture.drop=true;result={ready:true}; }
+    else if (request.url === '/test/reject-next-delivery') { deliveryFixture.reject=true;result={ready:true}; }
     else if (request.url === '/test/change-delivery-fee') { deliveryFixture.changedFee=Boolean(args.changed);result={ready:true}; }
     else if (request.url === '/test/deny-next') { denyNext = true; result = { ready: true }; }
     else if (request.url === '/test/redirect-next') { redirectNext = true; result = { ready: true }; }

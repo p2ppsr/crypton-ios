@@ -98,3 +98,7 @@ iOSInjectionProject/
 
 # Local Xcode test result bundles
 *.xcresult/
+
+# Private simulator run recordings and diagnostics
+/.recordings/
+__pycache__/

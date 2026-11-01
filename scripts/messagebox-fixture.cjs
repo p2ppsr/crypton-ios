@@ -33,6 +33,7 @@ app.post('/acknowledgeMessage',(req,res)=>{
 });
 app.post('/sendMessage',async(req,res)=>{
  try {
+  if(deliveryFixture.reject){deliveryFixture.reject=false;res.status(400).json({status:'error',description:'FIXTURE_REJECTED_PAYMENT_CHECK'});return;}
   const {message,payment}=req.body;
   if(!message?.messageId||!payment?.tx)throw Error('Missing fixture payment');
   const tx=Transaction.fromAtomicBEEF(payment.tx);
