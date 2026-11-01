@@ -89,3 +89,11 @@ The operator approved the six-scope group in installed iOS ME. A second wallet-i
 This verification exposed and corrected a management-view mismatch: the browser’s wallet controls initially used the page’s `localhost` hostname instead of the verified native identity. The view now resolves that exact tab URL to the previously verified pairing identity before listing or revoking grants. A bounded, persistent map of at most 128 verified page identities lets the owner manage grants after a capability expires. This metadata never authenticates wallet calls or permits an expired callback; the active request context retains its independent 15-minute expiry.
 
 Actual Swift policy tests cover that separation after capability expiry, forged-page rejection, and native signing identity. JavaScript tests cover management-only lookup, rejection of unverified native-looking hostnames, and unchanged ordinary-site behavior. TypeScript, permission-refresh failure/stale-result regressions, and mobile wallet UX checks pass. The companion simulator Release build and installed management screen were verified.
+
+### Cold-cache MessageBox authentication — 1 November 2026
+
+The retained-message production run exposed a remaining path that the identity-only restart test did not exercise: ME’s direct HMAC bridge skipped durable token lookup after its short-lived cache expired, then requested the already granted level-1 MessageBox scope individually. The duplicate prompt was dismissed without creating another grant.
+
+For verified Crypton identities, the bridge now checks the existing canonical protocol token, its exact scope and expiry before prompting. It does not use the process-global recent-grant shortcut for these identities. Missing authority goes through the grouped permission manager; an offline token lookup fails without starting a replacement grant. Other applications keep their existing interactive behavior.
+
+Twelve actual native bridge regression cases pass, including cold-cache reuse, denied/missing grants and offline failure. TypeScript and the simulator Release build pass. After installing the correction, the same retained draft completed authenticated production fee lookup without another permission prompt and returned automatically to Crypton. MessageBox quoted its server/recipient fees; wallet payment review remained separate.
