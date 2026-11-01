@@ -5,6 +5,18 @@ import AVFoundation
 final class CryptonTests: XCTestCase {
     let key = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     func envelope() throws -> String { try jsonString(["protocol":"crypton","version":2,"sender":key,"ciphertext":Data(repeating:4,count:48).base64EncodedString()]) }
+    @MainActor func testUnpaidProofRejectsEveryPaymentMarkerAndUnknownState() {
+        for state in ["DRAFT","QUOTED"] {
+            XCTAssertTrue(DeliveryStore.paymentNeverRequested(["state":state]))
+            for marker in ["paymentRequestedAt","walletResult","walletRefusal","payment","submittedAt","receipt"] {
+                XCTAssertFalse(DeliveryStore.paymentNeverRequested(["state":state,marker:NSNull()]),marker)
+            }
+        }
+        for state in ["PAYMENT_REQUESTED","PAYMENT_RETURNED","PAID","SUBMITTING","SENT","unknown",""] {
+            XCTAssertFalse(DeliveryStore.paymentNeverRequested(["state":state]),state)
+        }
+        XCTAssertFalse(DeliveryStore.paymentNeverRequested([:]))
+    }
     @MainActor func testCombinedContactImportExportAndDeliveryBinding() throws {
         let deliveryKey = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
         let code = try Wire.contactCode(name:"Peer iOS",key:key,wallet:deliveryKey)

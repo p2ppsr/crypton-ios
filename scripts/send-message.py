@@ -201,6 +201,11 @@ class Run:
         print(e['utc'], e['role'], stage, e.get('label', e.get('detail','')), flush=True)
         if stage == 'failed' and e.get('send_attempted') is False and e.get('role') == 'send' and not (self.folder / 'send-claimed').exists():
             self.state['status'] = 'failed'
+        if (stage == 'failed' and self.state.get('status') == 'sending' and e.get('role') == 'send' and e.get('send_attempted') is True
+                and e.get('payment_not_requested') is True and e.get('delivery_state') in ['DRAFT','QUOTED']
+                and isinstance(e.get('delivery_id'), str) and re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', e['delivery_id'])):
+            self.state.update(status='failed_before_payment', delivery_id=e['delivery_id'],
+                              payment_not_requested=True, delivery_state=e['delivery_state'])
         if stage == 'send_tapped':
             self.state['status'] = 'sending'
         if stage == 'pay_visible' or (stage == 'progress' and 'approve payment' in e.get('detail','').lower()):
@@ -450,7 +455,7 @@ def main():
     except (Exception, KeyboardInterrupt) as e:
         run.state['error'] = str(e) or 'Interrupted'
         if run.state['status'] == 'sending': run.state['status'] = 'needs_recovery'
-        elif run.state['status'] != 'accepted': run.state['status'] = 'failed'
+        elif run.state['status'] not in ['accepted','failed_before_payment']: run.state['status'] = 'failed'
         print('Stopped:', run.state['error'], file=sys.stderr)
     finally:
         if server:

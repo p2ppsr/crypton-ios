@@ -11,6 +11,7 @@ import CryptoKit
     private let began = ProcessInfo.processInfo.systemUptime
     private var started = false
     private var attemptedSend = false
+    private var sendingAfter = Double.infinity
     private var task: Task<Void,Never>?
     init?(model:AppModel) {
         let args = ProcessInfo.processInfo.arguments
@@ -74,6 +75,7 @@ import CryptoKit
                     }
                     try require(model.screen == .compose,"Recipient was not accepted")
                     model.message = text; event("composed"); try await claimSend()
+                    sendingAfter = Date().timeIntervalSince1970 * 1000
                     attemptedSend = true; event("send_tapped"); model.process(sendWithMessageBox:true); try await settle()
                     let record = try model.store.get(model.deliveryID)
                     try require(record["state"] as? String == "SENT","Native delivery did not reach SENT; inspect the saved payment")
@@ -99,7 +101,16 @@ import CryptoKit
                 let saved = try model.inboxStore.get(model.inboxWallet,id)
                 try require(saved["read"] as? Bool == true && !InboxStore.pending(saved),"The read message was not retained")
                 event("retained",["message_id":id]); event("phase_complete")
-            } catch { event("failed",["reason":error.localizedDescription,"send_attempted":attemptedSend]) }
+            } catch {
+                var fields:JSON = ["reason":error.localizedDescription,"send_attempted":attemptedSend]
+                if role == "send", attemptedSend, !model.busy,
+                   let record = try? model.store.get(model.deliveryID),
+                   let created = record["created"] as? Double, created >= sendingAfter {
+                    fields["delivery_id"] = model.deliveryID; fields["delivery_state"] = record["state"]
+                    if DeliveryStore.paymentNeverRequested(record) { fields["payment_not_requested"] = true }
+                }
+                event("failed",fields)
+            }
         }
     }
 }

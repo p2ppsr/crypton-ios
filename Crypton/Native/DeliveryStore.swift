@@ -58,6 +58,11 @@ import Foundation
     private func require(_ record: JSON, _ states: String...) throws {
         guard states.contains(record["state"] as? String ?? "") else { throw CryptonError("A second payment is blocked. Use this delivery’s saved payment or recovery action.") }
     }
+    /// Use only a validated, settled operation's own journal. Empty wallet history is insufficient.
+    static func paymentNeverRequested(_ record:JSON) -> Bool {
+        guard let state = record["state"] as? String, ["DRAFT","QUOTED"].contains(state) else { return false }
+        return ["paymentRequestedAt","walletResult","walletRefusal","payment","submittedAt","receipt"].allSatisfy { record[$0] == nil }
+    }
     static func total(_ quote: JSON, expectedAgent:String = agent) throws -> Int {
         guard let a = integer(quote["deliveryFee"]), let b = integer(quote["recipientFee"]), a >= 0, b >= 0, a <= Int32.max, b <= Int32.max, a + b <= Int32.max, quote["deliveryAgentIdentityKey"] as? String == expectedAgent else { throw CryptonError("Invalid MessageBox fee or server identity.") }
         return a + b

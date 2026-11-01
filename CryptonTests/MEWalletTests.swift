@@ -527,6 +527,46 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         let finalPaymentCount = integer(try await fixture("delivery-stats")["payments"])
         XCTAssertEqual(finalPaymentCount,before+1)
     }
+    @MainActor func testQuoteTimeoutRetriesWithFreshAuthenticationAndPaysOnce() async throws {
+        try await available()
+        let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:folder) }
+        let store = try DeliveryStore(directory:folder,fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
+        let page = MEPageFixture(); defer { page.close() }
+        let engine = CryptoEngine(wallet:page.wallet,store:store); defer { engine.close() }
+        let envelope = try await engine.run("seal",text:"Transient quote timeout retained test") as! String
+        let id = try store.create(envelope:envelope,key:"self",recipient:"self",name:"Timeout fixture")
+        let before = try await fixture("delivery-stats")
+        _ = try await fixture("quote-fault",["count":1,"mode":"timeout"])
+        _ = try await engine.prepareAndSend(id)
+        let after = try await fixture("delivery-stats")
+        XCTAssertEqual(try store.get(id)["state"] as? String,"SENT")
+        XCTAssertEqual(integer(after["quotes"]),integer(before["quotes"])!+3,"Retry plus final quote revalidation")
+        XCTAssertEqual(integer(after["paymentAttempts"]),integer(before["paymentAttempts"])!+1)
+        let ids = Array((after["quoteRequestIds"] as! [String]).suffix(3))
+        XCTAssertEqual(Set(ids).count,3,"Every quote must have a fresh authenticated request nonce")
+    }
+    @MainActor func testQuoteRetryExhaustionAndHTTPRejectionNeverReachPayment() async throws {
+        try await available()
+        let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:folder) }
+        let store = try DeliveryStore(directory:folder,fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
+        let page = MEPageFixture(); defer { page.close() }
+        let engine = CryptoEngine(wallet:page.wallet,store:store); defer { engine.close() }
+        let envelope = try await engine.run("seal",text:"Quote failure cannot pay") as! String
+        for mode in ["timeout","http503"] {
+            let count = mode == "timeout" ? 2 : 1
+            let id = try store.create(envelope:envelope,key:"self",recipient:"self",name:"Unpaid fixture")
+            let before = try await fixture("delivery-stats")
+            _ = try await fixture("quote-fault",["count":count,"mode":mode])
+            do { _ = try await engine.prepareAndSend(id); XCTFail("Failed quote reached payment") }
+            catch { XCTAssertTrue(error.localizedDescription.contains(mode == "timeout" ? "timed out" : "HTTP 503"),error.localizedDescription) }
+            let after = try await fixture("delivery-stats")
+            XCTAssertEqual(integer(after["quotes"]),integer(before["quotes"])!+count)
+            XCTAssertEqual(integer(after["paymentAttempts"]),integer(before["paymentAttempts"]))
+            XCTAssertTrue(DeliveryStore.paymentNeverRequested(try store.get(id)))
+        }
+    }
     @MainActor func testImmediateSendStillRejectsChangedRevalidationWithoutPayment() async throws {
         try await available()
         let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -3,11 +3,26 @@ const {isDeepStrictEqual}=require('node:util');
 const {alice,bob,deliveryFixture,load}=require('./sdk-wallet-fixture.cjs');
 const {ProtoWallet,PrivateKey,Transaction,Utils}=load('@bsv/sdk');
 const express=load('express');const {createAuthMiddleware}=load('@bsv/auth-express-middleware');
+// Opt-in CLI failure run: start with two stalled quotes to verify unpaid classification.
+const timeoutQuotes=Number(process.env.CRYPTON_FIXTURE_TIMEOUT_QUOTES||0);
+if(!Number.isInteger(timeoutQuotes)||timeoutQuotes<0||timeoutQuotes>2)throw Error('Invalid fixture quote timeout count');
+deliveryFixture.quoteFaults=timeoutQuotes;
 const serverWallet=new ProtoWallet(new PrivateKey(2));const accepted=new Map();const senders=new Map();const acknowledged=new Set();
 const app=express();app.use(express.json({limit:'8mb'}));app.use(express.raw({type:'application/octet-stream',limit:'8mb'}));
 app.use((req,res,next)=>{if(req.path==='/.well-known/auth')deliveryFixture.authHandshakes++;next();});
 app.use(createAuthMiddleware({wallet:serverWallet,allowUnauthenticated:false}));
-app.get('/permissions/quote',(req,res)=>{deliveryFixture.quotes++;res.json({status:'success',quote:{deliveryFee:deliveryFixture.changedFee||(deliveryFixture.changeFeeAtQuote&&deliveryFixture.quotes>=deliveryFixture.changeFeeAtQuote)?11:10,recipientFee:10}});});
+app.get('/permissions/quote',(req,res)=>{
+ deliveryFixture.quotes++;deliveryFixture.quoteRequestIds.push(req.headers['x-bsv-auth-request-id']);
+ if(deliveryFixture.quoteFaults>0){
+   deliveryFixture.quoteFaults--;
+   if(deliveryFixture.quoteFaultMode==='http503')return res.status(503).json({status:'error'});
+   // Actual stalled HTTP response exercises URLSession's production 15-second timeout.
+   // End it later if a regression leaves the request waiting instead of timing out.
+   const timer=setTimeout(()=>res.json({status:'error',reason:'fixture timeout did not fire'}),25000);
+   res.on('close',()=>clearTimeout(timer));return;
+ }
+ res.json({status:'success',quote:{deliveryFee:deliveryFixture.changedFee||(deliveryFixture.changeFeeAtQuote&&deliveryFixture.quotes>=deliveryFixture.changeFeeAtQuote)?11:10,recipientFee:10}});
+});
 app.post('/listMessages',(req,res)=>{
  deliveryFixture.inboxLists++;
  // Optional test-only lag: an accepted message is absent from the first N reads.

@@ -106,6 +106,23 @@ class Contract(unittest.TestCase):
             (run.folder/'send-claimed').touch()
             run.event({'run_id':'test','utc':'now','role':'send','stage':'failed','send_attempted':False})
             self.assertEqual(run.state['status'],'sending')
+    def test_settled_unpaid_journal_proof_releases_only_pre_payment_failure(self):
+        import threading
+        with tempfile.TemporaryDirectory() as folder:
+            run=send.Run.__new__(send.Run);run.plan={'run_id':'test'};run.folder=Path(folder)
+            run.state_lock=threading.RLock();run.events=[];run.state={'status':'sending'}
+            (run.folder/'send-claimed').touch()
+            evidence={'run_id':'test','utc':'now','role':'send','stage':'failed','send_attempted':True,
+                      'delivery_id':'43054422-2771-4052-a058-af93cc9c0314','delivery_state':'DRAFT','payment_not_requested':True}
+            for changes in [{'payment_not_requested':False},{'delivery_state':'PAYMENT_REQUESTED'},{'delivery_id':''},{'role':'receive'}]:
+                run.event({**evidence,**changes})
+                self.assertEqual(run.state['status'],'sending')
+            run.event(evidence)
+            self.assertEqual(run.state['status'],'failed_before_payment')
+            self.assertTrue(run.state['payment_not_requested'])
+            run.state['status']='accepted'
+            run.event(evidence)
+            self.assertEqual(run.state['status'],'accepted')
     def test_pre_send_failure_without_a_claim_does_not_block_a_new_run(self):
         import threading
         with tempfile.TemporaryDirectory() as folder:

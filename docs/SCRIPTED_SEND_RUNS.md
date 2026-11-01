@@ -40,6 +40,8 @@ For a known message that was already paid/submitted, verify the receiver without
 
 This mode reads the original text/hash/run ID, launches only the receiving simulator and performs refresh/decryption/retention checks. It rejects a sending phase and does not mint a send claim. Success marks the controller's original record `recipient_verified` with a link to the verification evidence. It does **not** manufacture a sender acceptance receipt or change a wallet/outbox journal. An outbox still marked SUBMITTING retains its saved payment and missing-receipt evidence.
 
+A settled native failure whose own validated DRAFT/QUOTED journal has no payment-request, wallet-result/refusal, payment, submission or receipt markers is reported as `failed_before_payment`. A tapped Send or consumed host claim alone does not mean payment started. Missing/stale journals, unfinished operations, payment markers or unknown states cannot supply this proof.
+
 An unresolved interrupted production send remains `needs_recovery`, blocking another send from that profile. Empty wallet history alone does not prove failure. Inspect the original run and saved outbox before any further payment. Ctrl-C/SIGTERM stop the controller and finalize recordings; they do not cancel an in-flight wallet operation. An interrupted capture is not proof of the eventual wallet outcome.
 
 ## Evidence
@@ -55,3 +57,18 @@ The first live UI-driver run composed **2026-11-01 20:45:02 UTC**, run `1fff3335
 The retained recordings/diagnostics establish a script failure after approval. Further UI-driver checks exposed cached-row taps during refresh and unreliable cross-app state/hit points. The old XCTest path is retained only for regression investigation; the command now uses native action completion.
 
 The native verification-only run matched that original plaintext on the peer at **21:25:19 UTC**, confirmed retention at **21:25:20 UTC**, and finalized its MP4. No second send/payment was made. The sender's SUBMITTING journal was preserved. A complete disposable native-driver send/receive/decrypt/retention run also passed with accented characters, emoji and quotes. Host tests cover literal data, run identity, replay denial, verification-only capability restrictions and transient-plan cleanup. A fresh paid production send with the native driver remains a separate test requiring human wallet approval.
+
+
+## 2.5.6: unpaid quote timeout
+
+Run `4885508a-4e76-43da-8fbf-38945815c1d0`, composed **2026-11-01 23:07:15 UTC**, completed wallet authentication but timed out during the first authenticated `/permissions/quote` GET after **68.137 seconds**. Its validated journal remained DRAFT, with no payment request/result, payment, submission or receipt. The controller incorrectly classified the consumed Send claim as requiring payment recovery. Scoped journal evidence corrected only that controller result to `failed_before_payment`; the native journal and original error were preserved. A later unauthenticated connectivity probe returned HTTP 401 promptly; it does not establish the original network/server cause.
+
+Quote GET requests now have an explicit 15-second network inactivity timeout and one additional attempt for typed native timeout, connection-loss or connection-refused errors. Each attempt passes through AuthFetch again to obtain a fresh signed request nonce. HTTP rejections, invalid authentication, changed fees and server-identity validation are not retried by this policy. Wallet approval waits retain their existing deadlines. No wallet payment or message submission is automatically repeated. The 15-second timeout is not an end-to-end Send deadline: wallet processing, authentication and response validation take additional time.
+
+Validation: four recorded simulator regressions passed, including a real stalled HTTP quote followed by a successful fresh-nonce retry and one synthetic payment, two actual timeouts with zero payment attempts, HTTP 503 without retry, changed-fee rejection, and conservative journal-marker checks. Twelve host contracts passed. A full recorded CLI fixture with `CRYPTON_FIXTURE_TIMEOUT_QUOTES=2` stopped after two stalled reads as `failed_before_payment`; its DRAFT proof and finalized MP4 were verified. The Release build passed and 2.5.6 (15) was installed in place on both live simulators. No live send, grant or spending action was made during this investigation. The original production timeout's underlying cause remains unconfirmed.
+
+To reproduce the complete unpaid failure on the disposable simulator (expected exit code 1):
+
+```sh
+CRYPTON_FIXTURE_TIMEOUT_QUOTES=2 ./scripts/send-message.py 'Retained encrypted quote timeout test' --fixture --sdk-root /tmp/crypton-ux251-fixtures
+```

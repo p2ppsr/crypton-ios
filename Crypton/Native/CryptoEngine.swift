@@ -222,13 +222,26 @@ import WebKit
         trace("http." + url.path + ".start",token:timingToken)
         defer { trace("http." + url.path + ".finished",token:timingToken) }
         var request = URLRequest(url:url); request.httpMethod = method
+        let quoteRead = method == "GET" && url.path == "/permissions/quote"
+        if quoteRead { request.timeoutInterval = 15 }
         if method == "POST" { request.httpBody = Data(body.utf8) }
         for (key,value) in headers {
             guard key.range(of:"^[A-Za-z0-9-]{1,100}$",options:.regularExpression) != nil, value.count <= 32_000, !value.contains("\r"), !value.contains("\n"), !["host","connection","content-length","cookie","authorization"].contains(key.lowercased()) else { throw CryptonError("Invalid MessageBox header.") }
             request.setValue(value,forHTTPHeaderField:key)
         }
         let client = BoundedHTTP(limit:2_000_000); http = client; defer { http = nil }
-        let (bodyData,response) = try await client.fetch(request)
+        let bodyData: Data, response: HTTPURLResponse
+        do { (bodyData,response) = try await client.fetch(request) }
+        catch {
+            let failure = error as NSError
+            // Typed evidence crosses the RPC boundary; JS must never infer retryability from text.
+            if quoteRead, failure.domain == NSURLErrorDomain,
+               [NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost, NSURLErrorCannotConnectToHost].contains(failure.code) {
+                trace("http.quote.transportFailure",token:timingToken)
+                return ["quoteTransportError":true,"message":error.localizedDescription] as JSON
+            }
+            throw error
+        }
         #if DEBUG
         NSLog("Crypton delivery HTTP %@ %@: %ld",method,url.path,response.statusCode)
         #endif

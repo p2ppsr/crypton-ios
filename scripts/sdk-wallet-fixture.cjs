@@ -12,7 +12,7 @@ const stranger = new ProtoWallet(PrivateKey.fromRandom());
 let denyNext = false;
 let redirectNext = false;
 let losePayment = false, holdPayment = false, paymentFailure = null, offlineNext = false; const actionHistory = [];
-const deliveryFixture={acks:0,ackMode:"normal",inboxRows:[],inboxLists:0,authHandshakes:0,quotes:0,changeFeeAtQuote:0,payments:0,paymentAttempts:0,drop:false,changedFee:false,receiptCount:0};
+const deliveryFixture={acks:0,ackMode:"normal",inboxRows:[],inboxLists:0,authHandshakes:0,quotes:0,quoteFaults:0,quoteFaultMode:"timeout",quoteRequestIds:[],changeFeeAtQuote:0,payments:0,paymentAttempts:0,drop:false,changedFee:false,receiptCount:0};
 const protocol = { protocolID: [1, 'crypton'], keyID: '1' };
 let discoveryRequests = 0;
 // Models a wallet's already-verified discovery response. No public certificate
@@ -108,6 +108,10 @@ const server = http.createServer(async (request, response) => {
     }
     else if (request.url === '/test/drop-next-delivery') { deliveryFixture.drop=true;result={ready:true}; }
     else if (request.url === '/test/reject-next-delivery') { deliveryFixture.reject=true;result={ready:true}; }
+    else if (request.url === '/test/quote-fault') {
+      if(!Number.isInteger(args.count)||args.count<0||args.count>3||!['timeout','http503'].includes(args.mode))throw Error('Invalid quote fault');
+      deliveryFixture.quoteFaults=args.count;deliveryFixture.quoteFaultMode=args.mode;result={ready:true};
+    }
     else if (request.url === '/test/change-fee-on-revalidation') { deliveryFixture.changeFeeAtQuote=args.changed?deliveryFixture.quotes+2:0;result={ready:true}; }
     else if (request.url === '/test/change-delivery-fee') { deliveryFixture.changedFee=Boolean(args.changed);result={ready:true}; }
     else if (request.url === '/test/deny-next') { denyNext = true; result = { ready: true }; }

@@ -30,6 +30,10 @@ async function nativeFetch(operation,url,config={}) {
   if(typeof body!=='string')body=new TextDecoder('utf-8',{fatal:true}).decode(body);
   const result=await deliveryRpc(operation,'http',{request:{url:String(url),method:config.method||'GET',headers,body}});
   live(operation);
+  if(result.quoteTransportError===true) {
+    const error=Error(result.message||'MessageBox quote connection failed.');
+    error.quoteTransportError=true;throw error;
+  }
   return new Response(Uint8Array.from(Utils.toArray(result.body,'base64')),{status:result.status,headers:result.headers});
 }
 function authClient(operation,wallet) {
@@ -42,7 +46,18 @@ function checkedQuote(quote,agent) {
   if(quote.deliveryFee+quote.recipientFee>2147483647)throw Error('MessageBox fee is too large.');return quote;
 }
 async function getQuote(client,r,recipient) {
-  const response=await client.fetch(r.host+'/permissions/quote?'+new URLSearchParams({recipient,messageBox:r.inbox}),{method:'GET',retryCounter:1});
+  const url=r.host+'/permissions/quote?'+new URLSearchParams({recipient,messageBox:r.inbox});
+  let response;
+  for(let attempt=0;attempt<2;attempt++) {
+    try { response=await client.fetch(url,{method:'GET',retryCounter:1});break; }
+    catch(error) {
+      // AuthFetch preserves the native transport error as a cause. A fresh fetch
+      // generates a fresh signed nonce; never replay the old authenticated HTTP.
+      let cause=error,transient=false;
+      for(let depth=0;cause&&depth<5;depth++,cause=cause.cause)if(cause.quoteTransportError===true)transient=true;
+      if(attempt||!transient)throw error;
+    }
+  }
   if(!response.ok)throw Error('MessageBox quote failed (HTTP '+response.status+').');
   const data=await response.json();if(data.status!=='success'||!data.quote)throw Error('MessageBox rejected the quote.');
   return checkedQuote({deliveryFee:data.quote.deliveryFee,recipientFee:data.quote.recipientFee,deliveryAgentIdentityKey:response.headers.get('x-bsv-auth-identity-key')},r.agent);
