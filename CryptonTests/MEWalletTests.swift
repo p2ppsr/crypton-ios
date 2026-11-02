@@ -107,6 +107,31 @@ final class MEWalletTests: XCTestCase {
         foreground = true; me.resumed(); try await network.value
         XCTAssertTrue(ready); XCTAssertEqual(try next()["foregroundRequired"] as? Bool,false)
     }
+    @MainActor func testCompletedOperationWaitsForConfirmedForegroundWithoutReinvokingWallet() async throws {
+        let opened = expectation(description:"Wallet opened")
+        var active = false, finished = false, launches = 0
+        let me = MEWallet(open:{ _ in launches += 1; opened.fulfill(); return true },foreground:{active},backgroundTime:false,
+                          requestTimeoutNanoseconds:50_000_000,foregroundTimeoutNanoseconds:2_000_000_000)
+        defer { me.cancel() }
+        me.beginOperation()
+        let call = Task { try await me.call("isAuthenticated",[:]) }
+        await fulfillment(of:[opened],timeout:5)
+        let token = me.token, host = String(me.origin.dropFirst("http://".count))
+        func next() throws -> JSON { try object(me.serve(LoopbackRequest(method:"GET",path:"/"+token+"/next",headers:["host":host],body:Data())).body) }
+        let command = try XCTUnwrap(try next()["command"] as? JSON)
+        let ack = me.serve(LoopbackRequest(method:"POST",path:"/"+token+"/result",headers:["host":host,"origin":me.origin,"content-type":"application/json"],body:try jsonData(["id":command["id"]!,"type":"CWI","isInvocation":false,"status":"success","result":["authenticated":true]])))
+        ack.sent?(); _ = try await call.value
+        let completion = Task { try await me.returnAfterOperation(); finished = true }
+        try await Task.sleep(nanoseconds:100_000_000)
+        XCTAssertFalse(finished,"An iOS Open confirmation is not foreground completion, nor another wallet request")
+        XCTAssertEqual(try next()["foregroundRequired"] as? Bool,true)
+        XCTAssertTrue(try next()["command"] is NSNull)
+        XCTAssertTrue(me.returned(URL(string:"crypton-wallet://return/"+token)!))
+        await Task.yield(); XCTAssertFalse(finished)
+        active = true; me.resumed(); try await completion.value
+        XCTAssertTrue(finished); XCTAssertEqual(launches,1)
+        me.endOperation(); XCTAssertTrue(me.token.isEmpty)
+    }
     @MainActor func testCancellingForegroundHandoffCannotStartNetworking() async throws {
         let opened = expectation(description:"Wallet opened")
         let me = MEWallet(open:{ _ in opened.fulfill(); return true },foreground:{false},backgroundTime:false)
@@ -291,6 +316,12 @@ final class MEWalletTests: XCTestCase {
     private(set) var wallet:MEWallet!
     private(set) var requests = 0
     private(set) var launches = 0
+    var blockReturn = false
+    private(set) var heldReturn:URL?
+    func confirmReturn() {
+        guard let url = heldReturn else { return }; heldReturn = nil
+        if wallet.returned(url) { active = true; wallet.resumed() }
+    }
     override init() {
         super.init()
         let content = WKUserContentController(); content.add(self,name:"fixtureME")
@@ -310,7 +341,10 @@ final class MEWalletTests: XCTestCase {
         guard message.frameInfo.isMainFrame, let data = message.body as? String, let command = try? object(Data(data.utf8)) else { return }
         if command["type"] as? String == "CRYPTON_RETURN", let callback = command["callback"] as? String, let url = URL(string:callback) {
             let accepted = wallet.returned(url)
-            if accepted { active = true; wallet.resumed() }
+            if accepted {
+                if blockReturn { heldReturn = url }
+                else { active = true; wallet.resumed() }
+            }
             web.evaluateJavaScript("window.postMessage({type:'CRYPTON_RETURN_STATUS',accepted:\(accepted)},'*');void 0")
             return
         }
@@ -566,6 +600,33 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         do { _ = try await page.wallet.call("getPublicKey",[:]); XCTFail("ME denial ignored") } catch { XCTAssertTrue(error.localizedDescription.contains("declined")) }
         XCTAssertGreaterThanOrEqual(page.requests,5)
     }
+    @MainActor func testIdentityCompletionWaitsThroughIOSConfirmationAndSupportsNextOperation() async throws {
+        try await available()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:folder) }
+        let page = MEPageFixture(); defer { page.close() }
+        let engine = CryptoEngine(wallet:page.wallet,store:try DeliveryStore(directory:folder)); defer { engine.close() }
+        page.blockReturn = true
+        var completed = false
+        let identity = Task { let value = try await engine.run("contactIdentity"); completed = true; return value }
+        for _ in 0..<500 {
+            if page.heldReturn != nil { break }
+            try await Task.sleep(nanoseconds:10_000_000)
+        }
+        XCTAssertNotNil(page.heldReturn)
+        let calls = page.requests
+        // Reproduce a human navigation confirmation exceeding the old 15s limit.
+        try await Task.sleep(nanoseconds:16_000_000_000)
+        XCTAssertFalse(completed,"Readiness cannot finish while iOS still blocks return")
+        XCTAssertEqual(page.requests,calls,"A blocked return cannot replay the wallet call")
+        page.blockReturn = false; page.confirmReturn()
+        _ = try await identity.value
+        XCTAssertTrue(completed); XCTAssertTrue(page.isCryptonActive)
+        for _ in 0..<3 {
+            _ = try await engine.run("contactIdentity")
+            XCTAssertTrue(page.isCryptonActive,"Every completed readiness operation must have returned before the next begins")
+        }
+    }
     @MainActor func testContactIdentityAndForegroundSubmission() async throws {
         try await available()
         let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -690,9 +751,11 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         do { _ = try await BoundedHTTP().fetch(req) } catch { throw XCTSkip("Start scripts/messagebox-fixture.cjs to run delivery tests.") }
         let before = integer(try await fixture("delivery-stats")["payments"])!
         let id = try store.create(envelope:envelope,key:"self",recipient:"self",name:"Disposable self")
-        let beforeLaunches = page.launches
         _ = try await engine.deliver("prepare",id:id)
-        XCTAssertEqual(page.launches,beforeLaunches + 1,"One ME launch must serve the whole quote operation")
+        // Authentication and quote HTTP require foreground Crypton between
+        // wallet phases. Completion must return too, rather than leave a stale
+        // ME page ready to interrupt the next operation.
+        XCTAssertTrue(page.isCryptonActive,"Quote preparation must finish its return before payment can begin")
         let prepared = try XCTUnwrap(try store.get(id)["prepared"] as? JSON)
         XCTAssertEqual(try store.feeTotal(prepared["quote"] as! JSON),20)
         _ = try await fixture("reject-next-delivery")

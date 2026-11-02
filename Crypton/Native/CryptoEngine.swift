@@ -22,6 +22,7 @@ import WebKit
     private var discoveryRequested = false
     private var sharingIdentity = false
     private var timer: Task<Void,Never>?
+    private var finishing: Task<Void,Never>?
     private var http: BoundedHTTP?
     var progress: ((String) -> Void)?
     #if DEBUG
@@ -114,6 +115,23 @@ import WebKit
         catch { finish(.failure(error)) }
     }
     private func finish(_ result: Result<Any,Error>) {
+        if case .success = result, let me = wallet as? MEWallet {
+            guard finishing == nil else { return }
+            let id = operation
+            finishing = Task { [weak self] in
+                do {
+                    try await me.returnAfterOperation()
+                    guard let self = self, self.operation == id, !Task.isCancelled else { return }
+                    self.complete(result)
+                } catch {
+                    guard let self = self, self.operation == id, !Task.isCancelled else { return }
+                    self.complete(.failure(error))
+                }
+            }
+        } else { complete(result) }
+    }
+    private func complete(_ result: Result<Any,Error>) {
+        finishing?.cancel(); finishing = nil
         switch result { case .success: trace("complete"); case .failure: trace("failed") }
         timingStarted = nil; sendAfterPreparation = false
         (wallet as? MEWallet)?.endOperation()

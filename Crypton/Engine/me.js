@@ -3,6 +3,9 @@ const statusText = document.getElementById('status'), returnLink = document.getE
 const sent = new Set(), received = new Set();
 const allowed = new Set(['isAuthenticated','waitForAuthentication','getPublicKey','getNetwork','encrypt','decrypt','createHmac','verifyHmac','createSignature','verifySignature','createAction','listActions','discoverByAttributes','discoverByIdentityKey']);
 let current = null, stopped = false, returning = false, saving = false, returnAttempts = 0, pendingResponse = null;
+// Visibility can change before ME navigates to the next capability. A retired
+// page must not switch apps again and background that new wallet request.
+let automaticReturnAccepted = false;
 const pageID = crypto.randomUUID();
 let pollTimer = null, polling = false;
 function queuePoll(delay=50) {
@@ -11,7 +14,7 @@ function queuePoll(delay=50) {
 }
 const visible = () => !document.hidden;
 function returnToApp() {
-  if (!visible() || (current && !saving && !pendingResponse) || returning || returnAttempts >= 8) return;
+  if (!visible() || automaticReturnAccepted || (current && !saving && !pendingResponse) || returning || returnAttempts >= 8) return;
   returning = true; returnAttempts++;
   // Updated ME validates this callback against UIKit's attributed source app and
   // refuses to leave while a native wallet prompt is active. No result is in it.
@@ -27,7 +30,7 @@ document.addEventListener?.('visibilitychange', () => {
 });
 returnLink.addEventListener('click', event => {
   event.preventDefault(); if (current && !pendingResponse) return;
-  returning=false; returnAttempts=0; returnToApp();
+  automaticReturnAccepted=false; returning=false; returnAttempts=0; returnToApp();
   if (pendingResponse && !saving) void saveResponse();
 });
 async function boundedFetch(path, options = {}) {
@@ -40,7 +43,7 @@ window.addEventListener('message', async event => {
   try { response = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
   if (response?.type === 'CRYPTON_RETURN_STATUS') {
     if (!response.accepted) { returning=false; if (visible()) setTimeout(returnToApp,500); }
-    else if (pendingResponse && !saving) void saveResponse();
+    else { automaticReturnAccepted=true; if (pendingResponse && !saving) void saveResponse(); }
     return;
   }
   if (!response || response.type !== 'CWI' || response.isInvocation !== false || response.id !== current) return;
@@ -105,6 +108,7 @@ async function poll() {
       if (!allowed.has(command.call) || !window.ReactNativeWebView) { statusText.textContent='Open this request in Metanet Explorer on this iPhone.'; stopped=true; }
       else {
         statusText.textContent=labels[command.call] || 'Preparing encrypted messages. Review any grouped permissions in ME.';
+        automaticReturnAccepted=false;
         sent.add(command.id); current=command.id;
         const invoke = () => {
           if (stopped || current !== command.id) return;

@@ -12,6 +12,10 @@ Updated ME establishes the app pairing identity from a signed capability URL and
 
 An ordinary ME operation no longer needs a manual return after each call. On completion, the page requests the exact callback. During a long approval, iOS may suspend Crypton; after ME finishes, the page foregrounds Crypton and retries saving that same response. It does not invoke the wallet again. Older ME builds retain the manual app-switcher fallback.
 
+Completed wallet pages make at most one accepted automatic return per command. Revealing an old page while ME navigates to a new capability does not trigger another app switch. An explicit tap on **Return to Crypton** remains available for recovery; a new wallet command starts a new return cycle.
+
+Crypton keeps a successful operation pending until its wallet handoff has returned to the active app. This also applies to identity/readiness checks, so their completion cannot race the next operation. iOS may ask to **Open Crypton**; this navigation confirmation is separate from wallet permissions and Pay. The return wait allows up to five minutes and displays the required action. Networking still starts only after Crypton is active. Cancellation and failed wallet calls do not automatically repeat a signature, HMAC, payment or submission.
+
 ## Cancellation and iOS limits
 
 ME approval calls have a five-minute deadline; enclosing engine/authentication exchanges have a fifteen-minute budget. Native HTTP calls retain independent network deadlines and response limits. Background tasks are finite; background audio is never used to keep the bridge running. Device locking can make protected journals unavailable until unlock.

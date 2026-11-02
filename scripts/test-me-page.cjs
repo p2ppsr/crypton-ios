@@ -6,7 +6,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const timers = new Set(), listeners = {}, invocations = [], returns = [];
   let nextCalls = 0, saves = 0, release, finished = false;
   const status = {textContent:''}, link = {href:'crypton-wallet://return/disposable',hidden:true,addEventListener:()=>{}};
-  const sandbox = {AbortController,clearTimeout,console,document:{getElementById:id=>id==='status'?status:link},location:{href:''},
+  const sandbox = {AbortController,clearTimeout,console,document:{getElementById:id=>id==='status'?status:link,addEventListener:(name,fn)=>{listeners[name]=fn}},location:{href:''},
     setTimeout:(fn,ms)=>{const timer=setTimeout(fn,ms);timers.add(timer);return timer;},
     fetch:async path=>{
       if(path==='next') { nextCalls++; return {ok:true,json:async()=>({session:true,finished,command:finished?null:{id:String(nextCalls),call:'getNetwork',type:'CWI',isInvocation:true,args:{}}})}; }
@@ -20,7 +20,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   sandbox.addEventListener=(name,fn)=>{listeners[name]=fn;};
   sandbox.ReactNativeWebView={postMessage:text=>{
     const message=JSON.parse(text);
-    if(message.type==='CRYPTON_RETURN') {returns.push(message);void listeners.message({source:sandbox,data:{type:'CRYPTON_RETURN_STATUS',accepted:true}});}
+    if(message.type==='CRYPTON_RETURN') {returns.push(message);void listeners.message({source:null,data:{type:'CRYPTON_RETURN_STATUS',accepted:true}});}
     else invocations.push(message);
   }};
   sandbox.crypto=require('node:crypto').webcrypto;
@@ -43,6 +43,11 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(sandbox.location.href,'','Only native ME may perform the app return');
     const callsAtCompletion = nextCalls; await pause(350);
     assert.equal(nextCalls,callsAtCompletion,'A completed page must not poll a closed localhost listener');
+    for(let i=0;i<3;i++) {
+      sandbox.document.hidden=true;listeners.visibilitychange();
+      sandbox.document.hidden=false;listeners.visibilitychange();await pause(60);
+    }
+    assert.equal(returns.length,1,'Revealing an obsolete completed page must not background the next wallet request');
     console.log('ME page: duplicate response channels, slow acknowledgement, queued calls and native return passed.');
   } finally {for(const timer of timers)clearTimeout(timer);}
 })().catch(error=>{console.error(error);process.exitCode=1;});

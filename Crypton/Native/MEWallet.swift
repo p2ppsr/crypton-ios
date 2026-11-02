@@ -10,6 +10,7 @@ import CryptoKit
     private let foreground: @MainActor () -> Bool
     private let backgroundTime: Bool
     private let requestTimeoutNanoseconds: UInt64
+    private let foregroundTimeoutNanoseconds: UInt64
     private var server: LoopbackServer?
     private var continuation: CheckedContinuation<Any,Error>?
     private var timer: Task<Void,Never>?
@@ -42,9 +43,11 @@ import CryptoKit
     private let scheme:String
     init(open: @escaping @MainActor (URL) async -> Bool = { await UIApplication.shared.open($0) },
          foreground: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active },
-         backgroundTime: Bool = true, scheme:String = "metanet", requestTimeoutNanoseconds:UInt64 = 300_000_000_000) {
+         backgroundTime: Bool = true, scheme:String = "metanet", requestTimeoutNanoseconds:UInt64 = 300_000_000_000,
+         foregroundTimeoutNanoseconds:UInt64 = 300_000_000_000) {
         self.open = open; self.foreground = foreground; self.backgroundTime = backgroundTime; self.scheme = scheme
         self.requestTimeoutNanoseconds = requestTimeoutNanoseconds
+        self.foregroundTimeoutNanoseconds = foregroundTimeoutNanoseconds
     }
     static func handoffURL(_ target:URL,scheme:String = "metanet",pairing:[URLQueryItem] = []) throws -> URL {
         guard ["metanet","metanet-bob"].contains(scheme) else { throw CryptonError("Unsupported ME wallet application.") }
@@ -105,13 +108,22 @@ import CryptoKit
         if foreground() { return }
         guard session, server != nil, !sessionFinished else { throw CryptonError("Return to Crypton to continue the MessageBox request.") }
         trace("network.foreground.requested")
+        progress?("Returning to Crypton · choose Open if iOS asks")
         try await withCheckedThrowingContinuation { (done:CheckedContinuation<Void,Error>) in
             networkForeground = done
             networkForegroundTimer = Task { [weak self] in
-                do { try await Task.sleep(nanoseconds:15_000_000_000) } catch { return }
-                self?.finishNetworkForeground(.failure(CryptonError("Return to Crypton to resume MessageBox networking. Your saved payment is unchanged.")))
+                do { try await Task.sleep(nanoseconds:self?.foregroundTimeoutNanoseconds ?? 300_000_000_000) } catch { return }
+                self?.finishNetworkForeground(.failure(CryptonError("Return to Crypton to finish the saved operation. Your saved payment is unchanged.")))
             }
         }
+    }
+    /// A completed crypto/readiness result is not a completed handoff. Keep its
+    /// page alive until Crypton is active, before another operation may open ME.
+    func returnAfterOperation() async throws {
+        guard server != nil else { return }
+        trace("completion.foreground.requested")
+        try await prepareForNetwork()
+        trace("completion.foreground.finished")
     }
     private func finishNetworkForeground(_ result:Result<Void,Error>) {
         let done = networkForeground; networkForeground = nil
@@ -176,6 +188,7 @@ import CryptoKit
         if foreground() { resumed() }; return true
     }
     func resumed() {
+        if server != nil { trace("lifecycle.active") }
         if networkForeground != nil, foreground() { finishNetworkForeground(.success(())); return }
         if sessionFinished { closeSession() }
         else if server != nil {
