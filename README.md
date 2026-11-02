@@ -8,7 +8,7 @@ The branch includes the SwiftUI application, native ME handoff, Android-compatib
 
 Every UI/device test run is recorded as a private MP4. The simulator test runner captures automatically; see [recording runs and retaining error evidence](docs/RECORDING_RUNS.md) for manual runs and artifact locations.
 
-**2.7.0 normal mode:** the first screen is recipient search with a selection dropdown, a message field and Send. Inbox, Sent and Contacts stay in the bottom navigation. Technical tools and connection options are available under **Settings → Advanced mode**. Existing wallet, retention and privacy choices are preserved. See [normal and advanced modes](docs/NORMAL_MODE.md).
+**2.7.1 normal mode:** the first screen is recipient search with a selection dropdown, a message field and Send. Compact text and keyboard-aware layout keep the editor and Send usable while typing. Sent messages, Received messages, Contacts and Settings are accessible from the gear menu. Technical tools and connection options are available under **Settings → Advanced mode**. Existing wallet, retention and privacy choices are preserved. See [normal and advanced modes](docs/NORMAL_MODE.md).
 
 **2.6.3 handoff update:** completed ME pages no longer automatically return again when revealed. Successful identity and crypto operations wait until Crypton is active before reporting completion. If iOS asks to Open Crypton, the app explains the action and allows a longer bounded return wait. Wallet approval deadlines and payment recovery remain separate. See [the handoff lifecycle](docs/ME_IOS_HANDOFF.md).
 

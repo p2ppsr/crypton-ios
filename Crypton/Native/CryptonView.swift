@@ -20,31 +20,55 @@ struct CryptonView: View {
     @State private var copied = false
     @State private var showRecipientDropdown = false
     @FocusState private var recipientSearchFocused:Bool
+    @State private var messageFocused = false
+    @State private var contentHeight:CGFloat = 500
+    private var normalComposerVisible:Bool { !model.advancedMode && (model.screen == .home || (model.screen == .compose && !model.decrypting)) }
     var body: some View {
         ZStack {
-            Color(red:0.025,green:0.045,blue:0.075).ignoresSafeArea()
+            Color(red:0.025,green:0.045,blue:0.075).ignoresSafeArea(.container)
             VStack(spacing:0) {
                 HStack {
-                    Button { model.screen = .home } label: { Text("CRYPTON").font(.system(.title3,design:.monospaced,weight:.bold)).tracking(4) }
+                    Button { model.screen = .home } label: { Text("CRYPTON").font(.system(model.advancedMode ? .title3 : .subheadline,design:.monospaced,weight:.bold)).tracking(3) }.frame(minHeight:44)
                         .accessibilityLabel("Crypton home")
                     Spacer()
-                    Button { model.screen = .settings } label: { Image(systemName:"gearshape").font(.title3) }.accessibilityLabel("Settings")
-                }.padding(.horizontal,24).padding(.vertical,18)
+                    if model.advancedMode {
+                        Button { model.screen = .settings } label: { Image(systemName:"gearshape").font(.title3).frame(width:44,height:44) }.accessibilityLabel("Settings")
+                    } else {
+                        Menu {
+                            Button("Sent messages",systemImage:"paperplane") { model.screen = .outbox }
+                            Button("Received messages",systemImage:"tray.and.arrow.down") { model.showInbox() }
+                            Button("Contacts",systemImage:"person.2") { model.decrypting = false; model.screen = .contacts }
+                            Button("Share my contact",systemImage:"person.crop.square") { model.identity() }
+                            Divider()
+                            Button("Settings",systemImage:"slider.horizontal.3") { model.screen = .settings }
+                        } label: { Image(systemName:"gearshape").font(.title3).frame(width:44,height:44) }
+                            .accessibilityLabel("Menu").accessibilityIdentifier("gearMenu")
+                    }
+                }.padding(.horizontal,model.advancedMode ? 24 : 16).padding(.vertical,model.advancedMode ? 8 : 2)
+                if !normalComposerVisible || !messageFocused {
                 Button { model.connect() } label: {
                     HStack { Circle().fill(model.statusReady ? mint : .orange).frame(width:7,height:7); Text(model.status).font(.footnote); Spacer(); Image(systemName:"arrow.up.right") }
                         .foregroundStyle(.white.opacity(0.7)).padding(14).background(panel,in:RoundedRectangle(cornerRadius:10))
-                }.padding(.horizontal,24).padding(.bottom,10).accessibilityIdentifier("walletStatus")
-                ScrollView {
-                    VStack(alignment:.leading,spacing:18) { content }
-                        .frame(maxWidth:620,alignment:.leading).padding(24).frame(maxWidth:.infinity)
-                }.scrollDismissesKeyboard(.interactively)
-                if !model.advancedMode {
-                    HStack {
-                        normalTab("Send","square.and.pencil") { model.decrypting = false; model.screen = .home }
-                        normalTab("Inbox","tray.and.arrow.down") { model.showInbox() }
-                        normalTab("Sent","paperplane") { model.screen = .outbox }
-                        normalTab("Contacts","person.2") { model.decrypting = false; model.screen = .contacts }
-                    }.padding(.horizontal,16).padding(.vertical,12).background(panel)
+                }.padding(.horizontal,model.advancedMode ? 24 : 16).padding(.bottom,model.advancedMode ? 10 : 4).accessibilityIdentifier("walletStatus")
+                }
+                GeometryReader { space in
+                    ScrollViewReader { scroll in
+                        ScrollView {
+                            VStack(alignment:.leading,spacing:model.advancedMode ? 18 : 12) { content }
+                                .frame(maxWidth:620,alignment:.leading).padding(model.advancedMode ? 24 : 16).frame(maxWidth:.infinity)
+                        }.scrollDismissesKeyboard(.interactively)
+                            .onAppear { contentHeight = space.size.height }
+                            .onChange(of:space.size.height) { height in
+                                contentHeight = height
+                                if messageFocused { scroll.scrollTo("normalMessageInput",anchor:.center) }
+                            }
+                            .onChange(of:messageFocused) { focused in
+                                if focused { showRecipientDropdown = false; scroll.scrollTo("normalMessageInput",anchor:.center) }
+                            }
+                    }
+                }
+                if normalComposerVisible {
+                    normalSendButton.frame(maxWidth:620).padding(.horizontal,16).padding(.vertical,8).frame(maxWidth:.infinity)
                 }
             }.disabled(model.busy)
             if let ciphertext = model.encryptedPreview {
@@ -121,7 +145,7 @@ struct CryptonView: View {
         }
     }
     private func title(_ text:String,_ subtitle:String = "") -> some View {
-        VStack(alignment:.leading,spacing:12) { Text(text).font(.system(size:32,weight:.bold,design:.rounded)); if !subtitle.isEmpty { Text(subtitle).font(.body).foregroundStyle(.white.opacity(0.6)).fixedSize(horizontal:false,vertical:true) } }
+        VStack(alignment:.leading,spacing:8) { Text(text).font(.system(size:model.advancedMode ? 32 : 21,weight:.bold,design:.rounded)); if !subtitle.isEmpty { Text(subtitle).font(model.advancedMode ? .body : .footnote).foregroundStyle(.white.opacity(0.6)).fixedSize(horizontal:false,vertical:true) } }
     }
     private func action(_ title:String,_ icon:String = "arrow.right",primary:Bool = false,_ work:@escaping () -> Void) -> some View {
         Button(action:work) { HStack(spacing:14) { Image(systemName:icon).frame(width:22); Text(title).fontWeight(.semibold); Spacer(); Image(systemName:"chevron.right").font(.caption) }.padding(18).frame(maxWidth:.infinity).foregroundStyle(primary ? Color.black : .white).background(primary ? mint : panel,in:RoundedRectangle(cornerRadius:14)) }
@@ -160,27 +184,22 @@ struct CryptonView: View {
             }
         }
     }
-    private func normalTab(_ text:String,_ icon:String,work:@escaping () -> Void) -> some View {
-        Button(action:work) {
-            VStack(spacing:4) { Image(systemName:icon); Text(text).font(.caption) }.frame(maxWidth:.infinity)
-        }.foregroundStyle(.white)
-    }
     private var normalCanSend:Bool {
         model.recipientChosen && !model.message.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && !model.legacy && (model.peer == "self" || !model.recipientWalletDraft.isEmpty)
     }
     private var normalComposer: some View {
-        VStack(alignment:.leading,spacing:16) {
-            title("New message")
-            Text("To").font(.subheadline).foregroundStyle(.secondary)
+        VStack(alignment:.leading,spacing:10) {
+            Text("To").font(.caption).foregroundStyle(.secondary)
             HStack {
-                TextField("Search by name, email or handle",text:$model.recipientQuery)
+                TextField("Name, email or handle",text:$model.recipientQuery)
+                    .font(.subheadline)
                     .textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search)
                     .focused($recipientSearchFocused).accessibilityIdentifier("normalRecipientSearch")
                     .onSubmit { showRecipientDropdown = true; model.searchRecipients() }
                     .onChange(of:model.recipientQuery) { _ in showRecipientDropdown = true }
-                Button { recipientSearchFocused = false; showRecipientDropdown = true; model.searchRecipients() } label: { Image(systemName:"magnifyingglass") }
+                Button { recipientSearchFocused = false; showRecipientDropdown = true; model.searchRecipients() } label: { Image(systemName:"magnifyingglass").frame(width:44,height:44) }
                     .accessibilityLabel("Search recipients").accessibilityIdentifier("normalRecipientSearchButton")
-            }.padding(16).background(panel,in:RoundedRectangle(cornerRadius:12))
+            }.padding(.horizontal,12).frame(minHeight:48).background(panel,in:RoundedRectangle(cornerRadius:12))
             if !model.recipientChosen && (showRecipientDropdown || recipientSearchFocused) {
                 VStack(alignment:.leading,spacing:12) {
                     ForEach(model.contacts.filter { model.recipientQuery.isEmpty || $0.name.localizedCaseInsensitiveContains(model.recipientQuery) }.prefix(8)) { contact in
@@ -200,22 +219,30 @@ struct CryptonView: View {
                 }.padding(16).background(panel,in:RoundedRectangle(cornerRadius:12))
             }
             if model.recipientChosen {
-                Label(model.peerName,systemImage:"checkmark.circle.fill").foregroundStyle(mint).accessibilityIdentifier("normalSelectedRecipient")
+                Label(model.peerName,systemImage:"checkmark.circle.fill").font(.footnote).foregroundStyle(mint).accessibilityIdentifier("normalSelectedRecipient")
                 if !model.legacy && model.peer != "self" && model.recipientWalletDraft.isEmpty {
                     Text("Ask this person to share their Crypton contact code and add it in Contacts to enable delivery.").font(.footnote).foregroundStyle(.orange)
                 }
             }
-            Text("Message").font(.subheadline).foregroundStyle(.secondary)
-            MessageEditor(text:$model.message).padding(12).frame(height:180).background(panel,in:RoundedRectangle(cornerRadius:12))
-                .onChange(of:model.message) { value in if value.utf16.count > 16_000 { model.message = String(value.prefix(16_000)) } }
-            action("Send","paperplane",primary:true) { model.decrypting = false; model.process(sendWithMessageBox:true) }
-                .accessibilityIdentifier("normalSendButton")
-                .disabled(!normalCanSend).opacity(normalCanSend ? 1 : 0.45)
+            Text("Message").font(.caption).foregroundStyle(.secondary)
+            MessageEditor(text:$model.message,fontSize:16,monospaced:false,onFocusChange:{ messageFocused = $0 },maximumUTF16Length:16_000)
+                .padding(10).frame(height:max(90,min(340,contentHeight - (model.recipientChosen ? 176 : 148))))
+                .background(panel,in:RoundedRectangle(cornerRadius:12)).id("normalMessageInput")
             if model.legacy {
                 Text("Your connection uses legacy messages. Manage it in Settings → Advanced mode to enable sending here.").font(.footnote).foregroundStyle(.orange)
             }
             if model.disappearSend { Label("Sent copy will be removed after delivery",systemImage:"timer").font(.footnote).foregroundStyle(.orange) }
         }
+    }
+    private var normalSendButton:some View {
+        Button {
+            recipientSearchFocused = false
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),to:nil,from:nil,for:nil)
+            model.decrypting = false; model.process(sendWithMessageBox:true)
+        } label: {
+            Label("Send",systemImage:"paperplane").font(.body.weight(.semibold)).frame(maxWidth:.infinity).frame(minHeight:50)
+                .foregroundStyle(.black).background(mint,in:RoundedRectangle(cornerRadius:12))
+        }.accessibilityIdentifier("normalSendButton").disabled(!normalCanSend).opacity(normalCanSend ? 1 : 0.45)
     }
     private func homeTile(_ text:String,icon:String,work:@escaping () -> Void) -> some View {
         Button(action:work) {
@@ -284,8 +311,7 @@ struct CryptonView: View {
                 Button(model.recipientSaved ? "Recipient saved" : "Save recipient contact") { model.saveDiscoveredRecipient() }.disabled(model.recipientSaved)
             }
             Text(model.decrypting ? "Encrypted text" : "Your message").font(.subheadline).foregroundStyle(.secondary)
-            MessageEditor(text:model.decrypting ? $model.ciphertext : $model.message).padding(12).frame(height:230).background(panel,in:RoundedRectangle(cornerRadius:12))
-                .onChange(of:model.message) { value in if value.utf16.count > 16_000 { model.message = String(value.prefix(16_000)) } }
+            MessageEditor(text:model.decrypting ? $model.ciphertext : $model.message,maximumUTF16Length:model.decrypting ? 100_000 : 16_000).padding(12).frame(height:230).background(panel,in:RoundedRectangle(cornerRadius:12))
                 .onChange(of:model.ciphertext) { value in if value.utf8.count > 100_000 { model.ciphertext = String(value.prefix(100_000)) } }
             if model.decrypting && model.advancedMode {
                 action("Scan encrypted QR","qrcode.viewfinder") { scanIdentity = false; modal = .scanner }

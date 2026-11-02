@@ -12,10 +12,14 @@ After encryption, the actual ciphertext is previewed for half a second before de
 
 ## Everyday navigation
 
-- **Send:** recipient search, selected recipient, message and Send.
-- **Inbox:** refresh, select, decrypt and reopen retained messages. Copy and share opened plaintext remain available.
-- **Sent:** readable delivery states and the existing saved-payment recovery actions. Server acceptance does not claim the recipient has read the message.
-- **Contacts:** save a shared Crypton contact code, scan a contact QR and share your own combined contact code.
+The composer is the single main screen. It has compact labels, recipient search, a message field and Send. The message field adapts to the available keyboard-safe area and scrolls into view when focused. Send stays pinned above the keyboard. Text entry uses a readable proportional font; key and ciphertext tools retain their monospaced font in Advanced mode.
+
+There is no bottom navigation. The gear menu contains:
+
+- **Sent messages:** readable delivery states and the existing saved-payment recovery actions. Server acceptance does not claim the recipient has read the message.
+- **Received messages:** refresh, select, decrypt and reopen retained messages. Copy and share opened plaintext remain available.
+- **Contacts:** save a shared Crypton contact code and scan a contact QR.
+- **Share my contact:** share the combined contact code.
 - **Settings:** wallet connection, pairing-code comparison, usage help and Advanced mode.
 
 Technical public keys, server addresses, payment transaction IDs and receipt IDs are hidden in normal mode. Recipient certification, payment review and recovery outcomes remain visible.

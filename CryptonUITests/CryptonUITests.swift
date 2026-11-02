@@ -22,9 +22,19 @@ final class CryptonUITests: XCTestCase {
         match.tap()
         let stamp = ISO8601DateFormatter().string(from:Date()), marker = UUID().uuidString
         print("CRYPTON_DRY_RUN composed_utc=\(stamp) run=\(marker) no_payment=true")
+        let plaintext = "Normal retained encrypted dry run. No payment. Composed: " + stamp + "; run: " + marker
         app.textViews["messageEditor"].tap()
-        app.textViews["messageEditor"].typeText("Normal retained encrypted dry run. No payment. Composed: " + stamp + "; run: " + marker)
-        app.buttons["messageInputDone"].tap(); capture("Dry run 3 - selected recipient and message")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout:5))
+        app.textViews["messageEditor"].typeText(plaintext)
+        XCTAssertEqual(app.textViews["messageEditor"].value as? String,plaintext,"Keyboard/layout changes must preserve every typed character")
+        let keyboard = app.keyboards.firstMatch, editor = app.textViews["messageEditor"], send = app.buttons["normalSendButton"]
+        XCTAssertTrue(keyboard.waitForExistence(timeout:5))
+        let keyboardTop = min(keyboard.frame.minY,app.buttons["messageInputDone"].frame.minY)
+        XCTAssertLessThanOrEqual(editor.frame.maxY,keyboardTop + 1,"The whole message editor must stay above the keyboard/accessory bar")
+        XCTAssertGreaterThan(editor.frame.height,60)
+        XCTAssertLessThanOrEqual(send.frame.maxY,keyboardTop + 1,"Send must remain visible while typing")
+        XCTAssertTrue(send.isHittable)
+        capture("Dry run 3 - keyboard message editor and Send remain visible")
         app.buttons["normalSendButton"].tap()
         let preview = app.staticTexts["encryptedPreviewText"]
         XCTAssertTrue(preview.waitForExistence(timeout:30)); capture("Dry run 4 - actual encrypted preview held for inspection")
@@ -34,7 +44,7 @@ final class CryptonUITests: XCTestCase {
         app.buttons["Cancel send"].tap()
         XCTAssertFalse(preview.waitForExistence(timeout:1))
         if app.alerts["Crypton"].exists { app.alerts["Crypton"].buttons["OK"].tap() }
-        app.buttons["Sent"].tap()
+        app.buttons["gearMenu"].tap(); app.buttons["Sent messages"].tap()
         XCTAssertTrue(app.staticTexts["No sent messages yet."].waitForExistence(timeout:5))
         capture("Dry run 5 - cancelled before creating a delivery or payment")
         let after = (try await fixture("delivery-stats")["payments"] as? NSNumber)?.intValue ?? 0
@@ -73,7 +83,7 @@ final class CryptonUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Share encrypted payload"].exists)
         let after = (try await fixture("delivery-stats")["payments"] as? NSNumber)?.intValue
         XCTAssertEqual(after,before+1)
-        app.buttons["Inbox"].tap(); app.buttons["Refresh inbox"].tap()
+        app.buttons["gearMenu"].tap(); app.buttons["Received messages"].tap(); app.buttons["Refresh inbox"].tap()
         let id = (seeded["ids"] as! [String])[0], row = app.buttons["inbox-" + id]
         XCTAssertTrue(row.waitForExistence(timeout:30)); row.tap()
         app.buttons["Decrypt message"].tap()
@@ -86,7 +96,7 @@ final class CryptonUITests: XCTestCase {
     }
     @MainActor func testAdvancedModeCanBeEnabledAndHiddenAgain() throws {
         let app = XCUIApplication(); app.launchArguments = ["--uitesting"]; app.launch()
-        app.buttons["Settings"].tap()
+        app.buttons["gearMenu"].tap(); app.buttons["Settings"].tap()
         XCTAssertTrue(app.switches["advancedMode"].waitForExistence(timeout:5))
         XCTAssertFalse(app.buttons["Save wallet connection"].exists)
         XCTAssertFalse(app.switches["Legacy iPhone message format"].exists)

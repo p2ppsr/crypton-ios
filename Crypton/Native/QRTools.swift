@@ -12,12 +12,16 @@ import UniformTypeIdentifiers
 struct MessageEditor: UIViewRepresentable {
     @Binding var text:String
     var label:String = "messageEditor"
+    var fontSize:CGFloat = 17
+    var monospaced = true
+    var onFocusChange:(Bool) -> Void = { _ in }
+    var maximumUTF16Length:Int? = nil
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context:Context) -> UITextView {
         let view = UITextView()
         view.delegate = context.coordinator
         view.backgroundColor = .clear; view.textColor = .white
-        view.font = UIFontMetrics.default.scaledFont(for:.monospacedSystemFont(ofSize:17,weight:.regular))
+        view.font = UIFontMetrics.default.scaledFont(for:monospaced ? .monospacedSystemFont(ofSize:fontSize,weight:.regular) : .systemFont(ofSize:fontSize))
         view.adjustsFontForContentSizeCategory = true
         view.autocorrectionType = .no; view.autocapitalizationType = .none
         view.smartQuotesType = .no; view.smartDashesType = .no; view.smartInsertDeleteType = .no
@@ -33,7 +37,9 @@ struct MessageEditor: UIViewRepresentable {
     }
     func updateUIView(_ view:UITextView,context:Context) {
         context.coordinator.parent = self
-        if view.text != text { view.text = text }
+        // UIKit owns the live editing buffer. A layout/focus render can carry
+        // an older binding snapshot and must not erase a just-typed character.
+        if !view.isFirstResponder, view.text != text { view.text = text }
     }
     final class Coordinator: NSObject,UITextViewDelegate {
         var parent:MessageEditor
@@ -41,6 +47,12 @@ struct MessageEditor: UIViewRepresentable {
         @objc func finishEditing() { editor?.resignFirstResponder() }
         init(_ parent:MessageEditor) { self.parent = parent }
         func textViewDidChange(_ textView:UITextView) { parent.text = textView.text }
+        func textView(_ textView:UITextView,shouldChangeTextIn range:NSRange,replacementText text:String) -> Bool {
+            guard let limit = parent.maximumUTF16Length else { return true }
+            return (textView.text as NSString).replacingCharacters(in:range,with:text).utf16.count <= limit
+        }
+        func textViewDidBeginEditing(_ textView:UITextView) { parent.onFocusChange(true) }
+        func textViewDidEndEditing(_ textView:UITextView) { parent.onFocusChange(false) }
     }
 }
 
