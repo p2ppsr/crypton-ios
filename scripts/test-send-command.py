@@ -15,7 +15,43 @@ spec = importlib.util.spec_from_file_location('send_command', Path(__file__).wit
 send = importlib.util.module_from_spec(spec); spec.loader.exec_module(send)
 
 class Contract(unittest.TestCase):
-    def test_target_includes_launch_and_receiver_and_excludes_only_exact_pay_wait(self):
+    def test_cpu_gate_requires_three_quiet_intervals_and_ignores_boot_average(self):
+        def output(samples):
+            return '\n'.join(f'Load Avg: {load}, 20.0, 30.0\nCPU usage: 20% user, 10% sys, {idle}% idle' for load,idle in samples)
+        report=send.cpu_report(output([(50,0),(8,70),(9,65),(8,72)]),16)
+        self.assertTrue(report['normal']);self.assertEqual(len(report['samples']),3)
+        for samples in [[(1,99),(8,70),(9,49),(8,72)],[(1,99),(8,70),(17,65),(8,72)],[(1,99),(8,70),(9,65)]]:
+            self.assertFalse(send.cpu_report(output(samples),16)['normal'])
+        self.assertFalse(send.cpu_report('unrecognized sampler output',16)['normal'])
+    def test_busy_cpu_prevents_send_launch_and_retains_its_report(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Test',fixture=False,timeout=60,cpu_wait=0),[{'device':'sender'},{'device':'receiver'}])
+            with patch.object(send,'sample_cpu',return_value={'normal':False,'samples':[]}),patch.object(send.subprocess,'check_output') as read,patch.object(send,'sim') as launch:
+                with self.assertRaises(send.CPUNotReady):run.phase(None,'send',run.profiles[0])
+                read.assert_not_called();launch.assert_not_called()
+            self.assertFalse((run.folder/'send-claimed').exists())
+            self.assertFalse(json.loads((run.folder/'cpu-load.json').read_text())[0]['normal'])
+    def test_cpu_gate_waits_for_headroom_and_preserves_all_samples(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Test',fixture=False,timeout=60,cpu_wait=30),[{'device':'sender'},{'device':'receiver'}])
+            with patch.object(send,'sample_cpu',side_effect=[{'normal':False,'utc':'first','samples':[]},{'normal':True,'utc':'second','samples':[]}]),patch.object(send.time,'monotonic',side_effect=[0,1]):
+                run.check_cpu('before_send_launch')
+            reports=json.loads((run.folder/'cpu-load.json').read_text())
+            self.assertEqual([r['normal'] for r in reports],[False,True])
+            self.assertFalse((run.folder/'send-claimed').exists())
+    def test_host_deadline_stops_only_the_scripted_app_and_cannot_retry_send(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Test',fixture=False,timeout=30),[{'device':'sender'},{'device':'receiver'}])
+            with patch.object(run,'check_cpu'),patch.object(send.subprocess,'check_output',return_value=str(Path(folder)/'container')+'\n'),patch.object(send,'sim') as launch,patch.object(send.time,'monotonic',side_effect=[0,100]),patch.object(send.subprocess,'run',return_value=types.SimpleNamespace(returncode=0)) as stop:
+                with self.assertRaisesRegex(RuntimeError,'phase deadline'):run.phase(None,'send',run.profiles[0])
+                self.assertEqual(launch.call_count,1,'No replay or recovery launch after the deadline')
+                stop.assert_called_once_with(['xcrun','simctl','terminate','sender',send.APP],capture_output=True,text=True,timeout=10)
+            self.assertFalse((run.folder/'send-claimed').exists())
+            self.assertEqual(run.events[-1]['stage'],'controller_app_stopped')
+    def test_sender_target_and_separate_end_to_end_exclude_only_exact_pay_wait(self):
         def event(stage,role,seconds,**extra):
             return {'stage':stage,'role':role,'utc':f'2026-11-02T00:00:{seconds:02d}.000Z',**extra}
         events=[event('launch_requested','send',0),event('send_tapped','send',2),
@@ -24,22 +60,28 @@ class Contract(unittest.TestCase):
                 event('wallet_payment_review_approved','send',10,device='sender',params={'review_id':'other'}),
                 event('wallet_payment_review_approved','send',14,device='sender',params={'review_id':'own'})]
         result=send.target_timing(events,wallet,sender_device='sender')
-        self.assertEqual(result['total_ms'],24000);self.assertEqual(result['pay_wait_ms'],6000)
-        self.assertEqual(result['adjusted_ms'],18000);self.assertTrue(result['met'])
+        self.assertEqual(result['total_ms'],19000);self.assertEqual(result['pay_wait_ms'],6000)
+        self.assertEqual(result['adjusted_ms'],13000);self.assertTrue(result['met'])
+        whole=send.target_timing(events,wallet,sender_device='sender',end_to_end=True)
+        self.assertEqual(whole['adjusted_ms'],18000);self.assertIsNone(whole['target_ms']);self.assertIsNone(whole['met'])
         self.assertEqual(send.target_timing(events,[],sender_device='sender')['status'],'unavailable')
-        self.assertEqual(send.target_timing(events[:-1],wallet,sender_device='sender')['status'],'unavailable')
-        self.assertFalse(send.target_timing(events,[],fixture=True)['met'],'Fixture costs cannot be hidden as human wait')
+        self.assertEqual(send.target_timing(events[:-1],wallet,sender_device='sender')['status'],'measured')
+        self.assertEqual(send.target_timing(events[:-1],wallet,sender_device='sender',end_to_end=True)['status'],'unavailable')
+        fixture=send.target_timing(events,[],fixture=True)
+        self.assertEqual(fixture['adjusted_ms'],19000);self.assertEqual(fixture['pay_wait_ms'],0)
         events[2]['review_id']=None
         self.assertEqual(send.target_timing(events,wallet,sender_device='sender')['status'],'unavailable','Unbound approval cannot become deducted wait')
         opened=event('wallet_payment_review_opened','send',8,device='sender',params={'review_id':'own'})
-        self.assertEqual(send.target_timing(events,[opened,*wallet],sender_device='sender')['adjusted_ms'],18000)
+        self.assertEqual(send.target_timing(events,[opened,*wallet],sender_device='sender')['adjusted_ms'],13000)
         self.assertEqual(send.target_timing(events,[opened,opened,*wallet],sender_device='sender')['status'],'unavailable','Ambiguous opened reviews cannot bind a modal')
         events[2]['review_id']='own'
         events[3]['utc']='2026-11-02T00:00:30.000Z'
         late=send.target_timing(events,wallet,sender_device='sender')
         self.assertEqual(late['total_ms'],30000);self.assertFalse(late['met'],'Parallel receipt work must finish inside the target too')
         unconfirmed=send.target_timing([e for e in events if e['stage']!='accepted'],wallet,sender_device='sender')
-        self.assertEqual(unconfirmed['adjusted_ms'],18000);self.assertFalse(unconfirmed['met'],'Missing sender receipt cannot satisfy the target')
+        self.assertEqual(unconfirmed['status'],'unavailable','Missing sender receipt cannot satisfy the target')
+        peer=send.target_timing([e for e in events if e['stage']!='accepted'],wallet,sender_device='sender',end_to_end=True)
+        self.assertEqual(peer['adjusted_ms'],18000);self.assertEqual(peer['sender_receipt'],'unconfirmed')
     def test_message_and_reports_share_one_run_marker_and_composition_time(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):

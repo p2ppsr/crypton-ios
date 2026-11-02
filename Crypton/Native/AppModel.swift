@@ -74,6 +74,7 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     private var task: Task<Void,Never>?
     var portal: PortalWallet? { wallet as? PortalWallet }
     init(defaults: UserDefaults = .standard, store: DeliveryStore? = nil, wallet: WalletConnection? = nil) {
+        NSLog("Crypton lifecycle model.created")
         let defaults = ProcessInfo.processInfo.arguments.contains("--uitesting") ? UserDefaults(suiteName:"crypton.uitests")! : defaults
         if ProcessInfo.processInfo.arguments.contains("--uitesting") { defaults.removePersistentDomain(forName:"crypton.uitests") }
         #if DEBUG

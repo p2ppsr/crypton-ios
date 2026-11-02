@@ -19,6 +19,9 @@ import WebKit
     private var timer: Task<Void,Never>?
     private var http: BoundedHTTP?
     var progress: ((String) -> Void)?
+    #if DEBUG
+    var httpWillStart: ((URL) -> Void)?
+    #endif
     private var root: URL?
     init(wallet: WalletConnection, store: DeliveryStore, inbox:InboxStore? = nil) {
         self.wallet = wallet; self.store = store; inboxStore = inbox ?? InboxStore(delivery:store)
@@ -219,12 +222,16 @@ import WebKit
         else if let session = delivery { try store.beforeHTTP(session.id,action:session.action,url:url,method:method,body:body) }
         else { throw CryptonError("Missing MessageBox authorization.") }
         let timingToken = operation ?? ""
-        // Paid submission and inbox work may outlive iOS's brief background
-        // allowance. Return only after the signing/payment wallet call finishes.
-        if method == "POST", ["/sendMessage","/listMessages","/acknowledgeMessage"].contains(url.path) {
-            try await (wallet as? MEWallet)?.prepareForNetwork()
-        }
+        // Authentication and fee reads can exhaust the same iOS background
+        // allowance as submission. Every authorized native HTTP request starts
+        // in Crypton, after its preceding wallet result has been saved.
+        trace("http." + url.path + ".foreground.start",token:timingToken)
+        try await (wallet as? MEWallet)?.prepareForNetwork()
+        trace("http." + url.path + ".foreground.finished",token:timingToken)
         guard operation == timingToken else { throw CancellationError() }
+        #if DEBUG
+        httpWillStart?(url)
+        #endif
         trace("http." + url.path + ".start",token:timingToken)
         defer { trace("http." + url.path + ".finished",token:timingToken) }
         var request = URLRequest(url:url); request.httpMethod = method

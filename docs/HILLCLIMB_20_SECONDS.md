@@ -1,22 +1,33 @@
 # Launch-to-verification optimization, 2 November 2026
 
-Target: 20,000 ms from the sender's app-launch request until both a sender receipt and verification of the exact plaintext and retained recipient copy. The later completion boundary wins when sender and receiver overlap. Build/install, recorder startup and the receiver configuration preflight happen before sender launch. App initialization, sender work, receiver launch, retrieval, decryption and retention are included. Only the evidenced interval between the visible Pay button and the matching sender-wallet review approval is subtracted. Missing approval/launch/verification evidence produces an unavailable metric; it cannot silently count as zero delay. Older modal diagnostics without an ID require exactly one matching sender review opened within the preceding second. `target-timing.json` also distinguishes fixtures and missing sender receipts; a missing receipt cannot satisfy the target.
+Target: **20,000 ms from the sender's app-launch request to its validated, durably saved MessageBox acceptance receipt**, excluding only the evidenced Pay-review interval. This matches the Android comparison supplied on 2 November: app launch → saved sender receipt. Build/install, recorder startup and receiver configuration preflight happen before sender launch. ME is already registered, unlocked and permissioned; draft/contact entry is scripted. Cold/warm claims must state which app processes were restarted.
+
+Recipient retrieval, exact plaintext comparison and retention are measured separately in `end-to-end-timing.json`. They remain required checks for a complete two-way test, but are not part of the 20-second sender target. A missing sender receipt cannot satisfy that target, even if recipient verification proves delivery. Only the visible Pay button → matching sender-wallet review approval interval is subtracted. Missing launch, receipt or review evidence makes the primary metric unavailable; unknown delay is never counted as zero. Older review events without an ID require exactly one matching sender review opened within the preceding second.
+
+Reports before 2.6.1 used the stricter recipient-retention endpoint under the same filename. Those original reports are preserved. Offline recalculation of the completed live run has separate `sender-target-timing-v2.json` and `end-to-end-timing-v2.json` files; this is a definition correction, not a new run or performance gain.
+
+| Comparable endpoint, excluding Pay review | Android warm | Android cold | Latest completed iOS production run |
+|---|---:|---:|---:|
+| Launch → validated saved sender receipt | 13.825 s | 17.631 s | 24.686 s |
+| Launch → recipient plaintext retained | 22.155 s | 22.141 s | 33.304 s |
+
+The Android messages were composed at 12:07:56 and 12:11:26 UTC. The iOS message was composed at 01:38:00 UTC using an earlier candidate, with ME already unlocked. This is not a matched warm/cold experiment and does not establish current-candidate performance.
 
 ## Recorded iterations
 
-| Candidate | Environment | Adjusted total | Outcome |
+| Candidate | Environment | Adjusted launch → recipient retained | Outcome |
 |---|---|---:|---|
-| Baseline | Disposable SDK wallet + authenticated MessageBox fixture | 20.761 s | Above target |
+| Baseline | Disposable SDK wallet + authenticated MessageBox fixture | 20.761 s | Synthetic baseline |
 | Reduced trace fsyncs + identity-error handling | Same fixture | 20.657 s | No meaningful timing gain |
 | Exact-ID transport lookup | Same single-message fixture | 20.780 s | No gain with one entry; avoids unrelated historical decryptions |
-| Combined exact retrieval + decryption | Same fixture | 18.497 s | Below target |
-| Repeat | Same fixture | 18.942 s | Below target |
-| Repeat | Same fixture | 18.559 s | Below target |
-| First live optimized send | Primary iOS → peer iOS, production ME/MessageBox | 33.304 s | Exact plaintext retained; sender receipt confirmed; above target |
+| Combined exact retrieval + decryption | Same fixture | 18.497 s | Synthetic end-to-end result |
+| Repeat | Same fixture | 18.942 s | Synthetic end-to-end result |
+| Repeat | Same fixture | 18.559 s | Synthetic end-to-end result |
+| First live optimized send | Primary iOS → peer iOS, production ME/MessageBox | 33.304 s | Exact plaintext retained; sender receipt confirmed |
 | Overlap candidate | Production, composed 02:02:41.788 UTC | Unavailable | Review expired without payment |
 | Repeat overlap candidate | Production, composed 02:18:28.451 UTC | Unavailable | Review expired without payment; launch to visible Pay was 30.625 s |
 
-The sub-20-second results are recorded synthetic self-sends, not a production timing claim. The production target remains open. The completed live send took 36.880 s wall time, less 3.576 s of evidenced Pay-button wait = 33.304 s. Its slow spans included server authentication (4.749 s), submission (5.143 s), and first wallet identity retrieval (3.872 s).
+The sub-20-second results are recorded synthetic self-sends, not a production timing claim. The production target remains open. The completed live send took 28.262 s to the sender receipt, less 3.576 s of evidenced Pay-button wait = **24.686 s**, 4.686 s above the sender target. Recipient retention took 36.880 s wall time, or 33.304 s after that same deduction. Its slow spans included server authentication (4.749 s), submission (5.143 s), and first wallet identity retrieval (3.872 s).
 
 ## Changes
 
@@ -49,3 +60,15 @@ ME 218 renders local-page recovery instructions directly in WebView's error rend
 The next run, composed 10:36:49.668 UTC, was cancelled before payment. Its native DRAFT journal confirmed payment was never requested. ME's startup diagnostics showed storage `makeAvailable` timeouts and authentication connection failures. Host HTTPS probes reached both public services, but successful simulator wallet authentication remains unresolved; no new production timing result was obtained.
 
 At the user's request, 24 temporary ME build/checkouts/result directories and 188 archived duplicate logs were removed. Directory allocation totalled 42.245 GiB; measured free space increased by 37.202 GiB to 48.799 GiB. A private diagnostic bundle of approximately 369 MiB retains source revisions, the older uncommitted native patch, lockfiles, build/test logs, test results and compressed native-210/candidate-218 simulator packages. Relevant MP4 evidence and installed wallet containers were preserved. The temporary worktrees were removed through Git; source branches remain in the main repository and the current fix is pushed. Build dependencies can be recreated when needed rather than retained as large temporary trees.
+
+## 2.6.1: foreground networking, bounded runs and CPU gates
+
+Authentication and fee-quote HTTP now use the same explicit Crypton foreground boundary as submission and inbox requests. Authorization still precedes networking; a completed wallet callback alone cannot start HTTP until Crypton is active. Separate foreground and HTTP spans show where time is spent. This closes a reproduced gap in the guard, but adds handoffs and needs fresh production measurement. [Crypton issue #2](https://github.com/p2ppsr/crypton-ios/issues/2) retains the intermittent failure evidence; its exact process/lifecycle cause is not yet established.
+
+A host deadline or interruption now stops only the scripted Crypton process before ending capture. It does not stop ME, reverse an already-issued wallet operation, clear journals or retry Send/payment. Fixed lifecycle events distinguish model creation and scene transitions without message content, keys or capabilities.
+
+Every run checks CPU headroom before building and again immediately before sender launch. Three consecutive interval samples must each have at least 50% idle CPU, with 1-minute load no greater than the logical CPU count. The initial since-boot CPU average is discarded. The controller waits up to 30 seconds per gate by default (`--cpu-wait 0..300`), records every sample, and reports `deferred_cpu_busy` if the gate fails. Sampling failure also blocks launch. Recipient checks following a paid send are allowed to finish without another gate. These thresholds are a local timing-test policy, not a claim that CPU alone determines latency.
+
+Validation: 24 host contracts and four recorded native/SDK regressions pass. Native tests cover actual foreground state at authentication, quote and submission, cancellation, fresh-nonce quote retry and one payment. A recorded production-wallet read-only check retrieved, decrypted and retained the previously delivered 00:11:57 UTC message at 12:37:56 UTC, without a send or payment. Two subsequent new-send attempts were deferred by CPU gates; they are not timing results. A fresh paid receipt measurement is still required.
+
+Saved-wallet startup recovered on both simulators after restarting ME, without resetting wallet data. Diagnostics show exhausted storage-initialization attempts were not restarted by the UI's Try again action. [Companion ME issue #82](https://github.com/p2ppsr/metanet-explorer-mobile/issues/82) records that evidence. The underlying initial storage connection failure and the earlier full-native rebuild regression remain unproven causes, and are not conflated.

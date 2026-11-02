@@ -52,6 +52,31 @@ def sim(*args, **kwargs):
     return command(['xcrun', 'simctl', *args], **kwargs)
 
 
+class CPUNotReady(RuntimeError):
+    pass
+
+
+def cpu_report(top_output, cores):
+    """Use interval readings, never top's initial since-boot CPU average."""
+    readings = [{'load_1m':float(m[0]),'idle_percent':float(m[1])} for m in re.findall(
+        r'Load Avg:\s*([0-9.]+)[^\n]*\nCPU usage:[^\n]*?([0-9.]+)% idle',top_output)]
+    policy = {'min_idle_percent':50,'max_load_per_logical_cpu':1,'stable_intervals':3}
+    samples = readings[1:]
+    normal = (isinstance(cores,int) and cores > 0 and len(samples) == 3
+              and all(50 <= s['idle_percent'] <= 100 and 0 <= s['load_1m'] <= cores for s in samples))
+    return {'utc':utc(),'normal':normal,'logical_cpus':cores,'policy':policy,'samples':samples}
+
+
+def sample_cpu():
+    if sys.platform != 'darwin': raise CPUNotReady('CPU sampling is unavailable on this host; no run was started')
+    try:
+        output = subprocess.check_output(['top','-l','4','-s','1','-n','0'],text=True,
+                                         timeout=15,env={**os.environ,'LC_ALL':'C'})
+        return cpu_report(output,os.cpu_count())
+    except (OSError,subprocess.SubprocessError) as error:
+        raise CPUNotReady('Could not verify CPU headroom; no run was started') from error
+
+
 def targets(data):
     if 'TestConfigurations' in data:
         return [t for c in data['TestConfigurations'] for t in c['TestTargets']]
@@ -111,15 +136,17 @@ def payment_review_id(visible, wallet_events, sender_device):
     return matches[0] if len(matches) == 1 and matches[0] else None
 
 
-def target_timing(events, wallet_events, fixture=False, sender_device=None):
+def target_timing(events, wallet_events, fixture=False, sender_device=None, end_to_end=False):
     """Cross-device UTC boundaries; deduct only an evidenced visible Pay wait."""
     def first(stage, role):
         return next((e for e in events if e.get('stage') == stage and e.get('role') == role), None)
-    launch, verified = first('launch_requested', 'send'), first('retained', 'receive')
+    launch = first('launch_requested','send')
     accepted = first('accepted','send')
-    report = {'target_ms': 20000, 'verification': 'exact_plaintext_and_retained_copy',
+    verified = first('retained','receive') if end_to_end else accepted
+    report = {'target_ms': None if end_to_end else 20000,
+              'verification': 'exact_plaintext_and_retained_copy' if end_to_end else 'validated_saved_sender_receipt',
               'fixture': fixture, 'status': 'unavailable'}
-    if not launch or not verified: return {**report, 'reason': 'Missing launch or recipient-verification boundary'}
+    if not launch or not verified: return {**report, 'reason': 'Missing launch or '+('recipient-verification' if end_to_end else 'sender-receipt')+' boundary'}
     def stamp(e): return datetime.fromisoformat(e['utc'].replace('Z', '+00:00')).timestamp()
     if accepted and stamp(accepted) > stamp(verified): verified=accepted
     total = (stamp(verified) - stamp(launch)) * 1000
@@ -137,7 +164,7 @@ def target_timing(events, wallet_events, fixture=False, sender_device=None):
     adjusted = total - wait
     return {**report, 'status': 'measured', 'launch_utc': launch['utc'], 'verified_utc': verified['utc'],
             'total_ms': round(total, 1), 'pay_wait_ms': round(wait, 1), 'adjusted_ms': round(adjusted, 1),
-            'met': adjusted <= 20000 and accepted is not None, 'sender_receipt': 'confirmed' if accepted else 'unconfirmed'}
+            'met': None if end_to_end else adjusted <= 20000, 'sender_receipt': 'confirmed' if accepted else 'unconfirmed'}
 
 
 class Run:
@@ -180,6 +207,21 @@ class Run:
 
     def save(self):
         with self.state_lock: write(self.folder / 'result.json', self.state)
+
+    def check_cpu(self, stage):
+        path = self.folder/'cpu-load.json'
+        reports = json.loads(path.read_text()) if path.exists() else []
+        deadline = time.monotonic()+getattr(self.args,'cpu_wait',30)
+        while True:
+            try:report = {'stage':stage,**sample_cpu()}
+            except CPUNotReady as error:report = {'stage':stage,'utc':utc(),'normal':False,'error':str(error),'samples':[]}
+            reports.append(report);write(path,reports)
+            self.state['cpu_baseline']=report;self.save()
+            if report['normal']:
+                print(report['utc'],stage,'cpu_ready',json.dumps(report['samples']),flush=True);return
+            if report.get('error') or time.monotonic() >= deadline:
+                raise CPUNotReady('CPU is busy or could not be measured: need three intervals with at least 50% idle and 1-minute load no higher than the logical CPU count. No send was launched; rerun after load settles.')
+            print(report['utc'],stage,'waiting_for_cpu',json.dumps(report['samples']),flush=True)
 
     def start_claim_server(self):
         owner = self
@@ -236,7 +278,7 @@ class Run:
             path = self.folder / (device + '.pipeline.jsonl')
             output = path.open('w')
             process = subprocess.Popen(['xcrun', 'simctl', 'spawn', device, 'log', 'stream', '--style', 'ndjson', '--level', 'info',
-                '--predicate', 'process == "Crypton" AND eventMessage BEGINSWITH "Crypton pipeline "'], stdout=output, stderr=subprocess.DEVNULL)
+                '--predicate', 'process == "Crypton" AND (eventMessage BEGINSWITH "Crypton pipeline " OR eventMessage BEGINSWITH "Crypton lifecycle ")'], stdout=output, stderr=subprocess.DEVNULL)
             self.logs.append((process, output))
             time.sleep(.1)
             if process.poll() is not None: raise RuntimeError('Native timing capture failed before the UI run')
@@ -357,6 +399,8 @@ class Run:
             raise RuntimeError('Verification mode cannot enter a sending phase')
         if getattr(self.args,'recovery_only',False) and role != 'recover-review':
             raise RuntimeError('Review recovery cannot enter another phase')
+        if role == 'send' or (role == 'receive' and getattr(self.args,'verify_run',None)):
+            self.check_cpu('before_'+role+'_launch')
         root = Path(subprocess.check_output(['xcrun','simctl','get_app_container',profile['device'],APP,'data'],text=True).strip())
         folder = root/'Library/Application Support/ScriptedRuns'/self.plan['run_id']
         folder.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -370,9 +414,11 @@ class Run:
         if self.args.fixture:launch += ['--uitesting','--sdk-wallet-fixture','--messagebox-fixture']
         launch += ['--crypton-script',self.plan['run_id']]
         offset = 0; pay_seen = False; deadline = time.monotonic()+self.args.timeout+30
+        launched = False; completed = False
         try:
             self.event({'run_id':self.plan['run_id'],'role':role,'stage':'launch_requested','utc':utc(), 'elapsed_ms':0})
             sim(*launch,stdout=subprocess.DEVNULL)
+            launched = True
             while time.monotonic()<deadline:
                 if self.stop_phases.is_set(): raise RuntimeError('Recorded phase stopped')
                 with events_path.open() as f:
@@ -386,6 +432,7 @@ class Run:
                         if event['stage']=='phase_complete':
                             expected={'preflight':'preflight_complete','send':'accepted','receive':'retained','recover-review':'unpaid_review_recovered'}[role]
                             if not any(e['role']==role and e['stage']==expected for e in self.events):raise RuntimeError('Missing '+expected+' evidence')
+                            completed = True
                             return
                     offset=f.tell()
                 if role=='send' and not self.args.fixture:
@@ -395,6 +442,18 @@ class Run:
         finally:
             (folder/'request.json').unlink(missing_ok=True)
             (folder/'request.tmp').unlink(missing_ok=True)
+            if launched and not completed:
+                # A suspended native timeout cannot be trusted to execute after
+                # the host stops recording. Stop only this scripted app. ME may
+                # still finish an already-issued call; its payment journal stays
+                # protected and no automatic send/payment retry is permitted.
+                try:
+                    stopped = subprocess.run(['xcrun','simctl','terminate',profile['device'],APP],
+                                             capture_output=True,text=True,timeout=10)
+                    self.event({'run_id':self.plan['run_id'],'role':role,'stage':'controller_app_stopped' if stopped.returncode == 0 else 'controller_app_stop_failed',
+                                'utc':utc(),'elapsed_ms':0})
+                except (OSError,subprocess.SubprocessError):
+                    self.state['native_cleanup_failed']=True;self.save()
 
     def observe_payment(self, profile, report=True):
         try:
@@ -469,11 +528,21 @@ class Run:
             write(self.folder/'wallet-review-events.json',wallet_events); self.save()
         target = target_timing(self.events, wallet_events, self.args.fixture, self.profiles[0]['device'])
         write(self.folder/'target-timing.json', target)
+        end_to_end = target_timing(self.events,wallet_events,self.args.fixture,self.profiles[0]['device'],end_to_end=True)
+        write(self.folder/'end-to-end-timing.json',end_to_end)
+        self.state['end_to_end_timing']=end_to_end
         self.state['target_timing'] = target; self.save()
         if target['status'] == 'measured':
-            print('Launch → verified, excluding Pay click wait: '+str(target['adjusted_ms'])+' ms; target 20000 ms; '+('MET' if target['met'] else 'NOT MET')+(' (disposable fixture)' if self.args.fixture else ''), flush=True)
+            print('Launch → saved sender receipt, excluding Pay click wait: '+str(target['adjusted_ms'])+' ms; target 20000 ms; '+('MET' if target['met'] else 'NOT MET')+(' (disposable fixture)' if self.args.fixture else ''), flush=True)
+        if end_to_end['status']=='measured':
+            print('Separate launch → recipient retained verification, excluding Pay click wait: '+str(end_to_end['adjusted_ms'])+' ms',flush=True)
         rows = ['Crypton single-command run', 'Run: ' + self.plan['run_id'], 'Composed (UTC): ' + self.plan['composed_at'], 'Result: ' + self.state['status'],
-                '', 'UI-observed intervals (sampled completion timestamps; not pure network time):']
+                '', 'Primary target: launch -> validated saved sender receipt, excluding evidenced Pay review only.',
+                json.dumps(target,sort_keys=True),
+                '', 'Separate end-to-end metric: launch -> exact recipient plaintext and retained copy.',
+                json.dumps(end_to_end,sort_keys=True),
+                '', 'CPU headroom: see cpu-load.json for every gate/sample; deferred runs start no send.',
+                '', 'Native-driver intervals (completion timestamps; not pure network time):']
         rows += [t['from'] + ' -> ' + t['to'] + ': ' + str(t['milliseconds']) + ' ms' for t in timings]
         rows += ['', 'All UI events (UTC):']
         rows += [e['utc'] + ' ' + e['role'] + ' ' + e['stage'] for e in self.events]
@@ -497,8 +566,10 @@ def main():
     p.add_argument('--fixture', action='store_true', help='Disposable self-send on Crypton-iOS-Test only; no live wallets or spending')
     p.add_argument('--sdk-root', type=Path, default=os.environ.get('CRYPTON_SDK_ROOT'))
     p.add_argument('--timeout', type=int, default=300, help='Maximum seconds per UI phase; never overrides ME review expiry')
+    p.add_argument('--cpu-wait',type=int,default=30,help='Seconds to wait for CPU headroom at each gate, from 0 to 300; never bypasses the gate')
     p.add_argument('--dry-run', action='store_true', help='Validate profiles and print plan without UI or wallet actions')
     a = p.parse_args()
+    if not 0 <= a.cpu_wait <= 300:p.error('--cpu-wait must be from 0 to 300 seconds')
     if (not a.verify_run and not a.text.strip()) or not 30 <= a.timeout <= 900: p.error('Nonempty text and a timeout from 30 to 900 seconds are required')
     if a.verify_run and (a.text or a.fixture or not re.fullmatch(r'[a-f0-9]{64}',a.message_id or '')): p.error('--verify-run requires --message-id and excludes new text/fixtures')
     os.umask(0o077); ARTIFACTS.mkdir(exist_ok=True)
@@ -538,6 +609,7 @@ def main():
             p.error('Resolve the saved payment outcome before another run: ' + str(result.parent))
     run, server, server_log = Run(a, profiles), None, None
     try:
+        run.check_cpu('before_build')
         build = ARTIFACTS / ('send-run-fixture-build' if a.fixture else 'send-run-release-build')
         with (run.folder / 'build.log').open('w') as log:
             command(['xcodebuild', '-project', str(REPO / 'Crypton.xcodeproj'), '-scheme', 'Crypton', '-configuration', 'Debug' if a.fixture else 'Release',
@@ -567,6 +639,9 @@ def main():
             run.send_and_verify(templates[0])
         else:
             run.phase(templates[0], 'receive', profiles[1])
+    except CPUNotReady as e:
+        run.state.update(status='deferred_cpu_busy',error=str(e))
+        print('Deferred:',e,file=sys.stderr)
     except (Exception, KeyboardInterrupt) as e:
         run.state['error'] = str(e) or 'Interrupted'
         if run.state['status'] == 'sending': run.state['status'] = 'needs_recovery'

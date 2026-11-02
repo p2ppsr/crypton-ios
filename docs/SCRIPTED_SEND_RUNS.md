@@ -8,7 +8,7 @@ The default direction is primary iOS → peer iOS. Add `--reverse` for peer → 
 
 ## Execution
 
-Version 2.5.5 uses a **simulator-only native driver** that calls Crypton's ordinary `AppModel` actions: choose the contact, compose, Send with MessageBox, refresh the inbox, open/decrypt, and close/reopen the retained copy. The real encryption, native ME bridge, grouped permissions, fresh quote comparison, payment journal and MessageBox validation all remain in those actions. The driver does not use XCTest taps or read application foreground states to decide whether an operation finished. It awaits each native action's actual completion.
+Version 2.6.1 uses a **simulator-only native driver** that calls Crypton's ordinary `AppModel` actions: choose the contact, compose, Send with MessageBox, refresh the inbox, open/decrypt, and close/reopen the retained copy. The real encryption, native ME bridge, grouped permissions, fresh quote comparison, payment journal and MessageBox validation all remain in those actions. The driver does not use XCTest taps or read application foreground states to decide whether an operation finished. It awaits each native action's actual completion.
 
 The command builds Release, records both selected simulators, and installs Crypton in place. It checks ME/v2/retained-message settings without changing them, then makes one Send attempt. Review the full wallet total and click **Pay once** yourself in ME; leave **Allow up to** unchanged. The command never clicks Pay/Allow, grants access, changes wallet policy or extends ME's review deadline. It foregrounds Simulator and prints the sender, composition time and run ID when review is requested. Exact Pay-visible timing comes from ME's existing spending-modal diagnostics when available; the earlier native review-request event is labeled separately.
 
@@ -42,7 +42,7 @@ This mode reads the original text/hash/run ID, launches only the receiving simul
 
 A settled native failure whose own validated DRAFT/QUOTED journal has no payment-request, wallet-result/refusal, payment, submission or receipt markers is reported as `failed_before_payment`. A tapped Send or consumed host claim alone does not mean payment started. Missing/stale journals, unfinished operations, payment markers or unknown states cannot supply this proof.
 
-An unresolved interrupted production send remains `needs_recovery`, blocking another send from that profile. Empty wallet history alone does not prove failure. Inspect the original run and saved outbox before any further payment. Ctrl-C/SIGTERM stop the controller and finalize recordings; they do not cancel an in-flight wallet operation. An interrupted capture is not proof of the eventual wallet outcome.
+An unresolved interrupted production send remains `needs_recovery`, blocking another send from that profile. Empty wallet history alone does not prove failure. Inspect the original run and saved outbox before any further payment. Ctrl-C/SIGTERM and host phase deadlines stop the scripted Crypton process before finalizing recordings. They do not stop ME, cancel or reverse an already-issued wallet operation, clear journals or permit a second payment. An interrupted capture is not proof of the eventual wallet outcome.
 
 ## Evidence
 
@@ -110,3 +110,13 @@ The two native lifecycle/cancellation tests passed. The first integration run ex
 
 
 The second recorded installed-ME read verified the new boundary: foreground was requested at **00:30:47.476 UTC**, Crypton became active at **00:30:48.064 UTC**, and `/listMessages` ran from **00:30:48.064 to 00:30:52.157 UTC**. The exact message was found. Its subsequent extra decryption entered the Crypton root-fallback wallet permission prompt. That is distinct from the already-approved self-identity scope; the prompt was initially mislabeled during investigation, corrected, and the extra recheck stopped without granting it. The message's earlier successful decryption/retention at 00:20:28 remains the delivery evidence. This fallback permission/local-derived-decryption issue remains unverified and is not counted as a complete successful recheck. No additional paid submission was made to validate 2.5.9's live receipt path.
+
+## 2.6.1: timing boundaries and host-load guard
+
+`target-timing.json` measures **sender launch → validated, saved sender receipt**, with a 20-second target, excluding only the evidenced visible-Pay → matching sender review approval interval. This matches the Android sender comparison. `end-to-end-timing.json` separately measures launch → exact recipient plaintext retained. A missing receipt makes the sender target unavailable even when recipient verification succeeds. Original older reports using the recipient endpoint are preserved; see [measurement definitions and historical comparisons](HILLCLIMB_20_SECONDS.md).
+
+Before build and immediately before sender launch, the controller requires three interval samples with at least 50% idle CPU and 1-minute load no higher than the logical CPU count. It discards `top`'s initial since-boot average. It waits up to 30 seconds per gate, records all observations in `cpu-load.json`, and exits as `deferred_cpu_busy` without starting Send if the machine remains busy or cannot be sampled. Use `--cpu-wait 120` to wait up to two minutes per gate; allowed values are 0–300 and none bypass the check. A paid run's recipient verification continues without another CPU gate. `python3 scripts/check-cpu.py` performs only a read-only host-load check.
+
+All authorized native HTTP, including MessageBox authentication and quote requests, now explicitly waits for foreground Crypton after the preceding wallet result is saved. Separate foreground/HTTP spans and content-free lifecycle events are captured in native logs. The host stops only its scripted Crypton process on failed or interrupted phases so it cannot silently continue after recordings end; an already-dispatched ME operation may still finish, and unresolved payment records remain blocked. No automatic payment or Send retry was added.
+
+Recorded native regressions and a production-wallet receiver-only check passed. A fresh paid run is still needed to establish the new sender timing. CPU-deferred attempts are not measurements.

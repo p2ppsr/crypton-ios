@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+python3 scripts/check-cpu.py
 node scripts/test-me-page.cjs
 # Run only on a dedicated Crypton device, never the user's currently booted simulator.
 CRYPTON_DEVICE_ID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next((d["udid"] for devices in json.load(sys.stdin)["devices"].values() for d in devices if d["name"] == "Crypton-iOS-Test"), ""))')"

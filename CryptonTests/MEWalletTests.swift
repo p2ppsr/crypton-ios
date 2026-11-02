@@ -287,6 +287,7 @@ final class MEWalletTests: XCTestCase {
 @MainActor private final class MEPageFixture: NSObject,WKScriptMessageHandler,WKNavigationDelegate {
     private var web:WKWebView!
     private var active = false
+    var isCryptonActive:Bool { active }
     private(set) var wallet:MEWallet!
     private(set) var requests = 0
     private(set) var launches = 0
@@ -572,6 +573,11 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         let store = try DeliveryStore(directory:folder,fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
         let page = MEPageFixture(); defer { page.close() }
         let engine = CryptoEngine(wallet:page.wallet,store:store); defer { engine.close() }
+        var networkPaths = Set<String>()
+        engine.httpWillStart = { url in
+            XCTAssertTrue(page.isCryptonActive,"Authentication, fee reads and submission must all start in foreground Crypton")
+            networkPaths.insert(url.path)
+        }
         let identityValue = try await engine.run("contactIdentity")
         let identity = try XCTUnwrap(identityValue as? JSON)
         XCTAssertNoThrow(try Wire.identity(identity["receivingKey"] as? String ?? ""))
@@ -580,9 +586,9 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         let envelope = try await engine.run("seal",text:"Single ME visit retained message") as! String
         let id = try store.create(envelope:envelope,key:"self",recipient:"self",name:"Self")
         let beforeStats = try await fixture("delivery-stats")
-        let beforeLaunches = page.launches, before = integer(beforeStats["payments"])!
+        let before = integer(beforeStats["payments"])!
         _ = try await engine.prepareAndSend(id)
-        XCTAssertEqual(page.launches,beforeLaunches+2,"Keep preparation in one session; return to Crypton for submission and ME for response verification")
+        XCTAssertTrue(Set(["/.well-known/auth","/permissions/quote","/sendMessage"]).isSubset(of:networkPaths))
         XCTAssertEqual(try store.get(id)["state"] as? String,"SENT")
         let sentStats = try await fixture("delivery-stats")
         let paymentCount = integer(sentStats["payments"])
@@ -671,7 +677,6 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         XCTAssertEqual(model.screen,.delivery)
         XCTAssertEqual(try store.get(model.deliveryID)["state"] as? String,"SENT")
         XCTAssertEqual(model.status,"MessageBox delivery complete"); XCTAssertTrue(model.statusReady)
-        XCTAssertEqual(page.launches,2,"Preparation shares one visit; the receipt is verified after foreground networking")
     }
     @MainActor func testNativePaidDeliveryRecoveryWithoutSecondPayment() async throws {
         try await available()
