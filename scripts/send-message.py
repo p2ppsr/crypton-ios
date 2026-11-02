@@ -206,6 +206,13 @@ class Run:
                 and isinstance(e.get('delivery_id'), str) and re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', e['delivery_id'])):
             self.state.update(status='failed_before_payment', delivery_id=e['delivery_id'],
                               payment_not_requested=True, delivery_state=e['delivery_state'])
+        if (stage == 'failed' and self.state.get('status') == 'sending' and e.get('role') == 'send'
+                and e.get('send_attempted') is True and e.get('delivery_state') == 'SUBMITTING'
+                and e.get('has_saved_payment') is True
+                and re.fullmatch(r'[a-f0-9]{64}', str(e.get('message_id', '')))
+                and re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', str(e.get('delivery_id', '')))):
+            self.state.update(verify_unconfirmed_submission=True, delivery_id=e['delivery_id'],
+                              message_id=e['message_id'], sender_receipt='unconfirmed')
         if stage == 'send_tapped':
             self.state['status'] = 'sending'
         if stage == 'pay_visible' or (stage == 'progress' and 'approve payment' in e.get('detail','').lower()):
@@ -217,6 +224,23 @@ class Run:
         if stage == 'accepted': self.state.update(status='accepted', message_id=e['message_id'])
         if stage == 'retained': self.state['status'] = 'complete'
         self.save()
+
+    def send_and_verify(self, template):
+        self.phase(template, 'preflight', self.profiles[1])
+        try:
+            self.phase(template, 'send', self.profiles[0])
+        except Exception as error:
+            # A validated, settled native SUBMITTING record supplies the exact
+            # message ID and saved-payment proof. Continue with READS only.
+            if not self.state.pop('verify_unconfirmed_submission', False): raise
+            self.state.update(status='needs_recovery', sender_error=str(error), sender_receipt='unconfirmed')
+            self.save()
+            print('Sender receipt missing; checking the exact paid message on the recipient. No resend/payment.\n'
+                  'Composed: '+self.plan['composed_at']+'; run: '+self.plan['run_id'], flush=True)
+        self.phase(template, 'receive', self.profiles[1])
+        if self.state.get('sender_receipt') == 'unconfirmed':
+            self.state['status'] = 'recipient_verified'
+            self.save()
 
     # Historical UI executor, retained for regression tests only. The CLI uses phase() below.
     def phase_xctest(self, template, role, profile):
@@ -332,7 +356,7 @@ class Run:
             elif ready.exists():
                 metadata = json.loads(ready.read_text()); metadata = json.loads((Path(metadata['runDirectory']) / 'run.json').read_text())
                 if metadata['status'] != 'complete': self.state['recording_error'] = True
-        if (self.state.get('recording_error') or self.state.get('diagnostics_error')) and self.state['status'] == 'complete': self.state['status'] = 'evidence_failed'
+        if (self.state.get('recording_error') or self.state.get('diagnostics_error')) and self.state['status'] in ['complete','recipient_verified']: self.state['status'] = 'evidence_failed'
         self.state['finished_at'] = utc(); self.save()
         pairs = [('send_tapped', 'pay_visible'), ('send_tapped', 'accepted'), ('refresh_tapped', 'received'), ('decrypt_tapped', 'decrypted')]
         timings = []
@@ -449,13 +473,13 @@ def main():
             sim('install', device, str(products / 'Crypton.app'))
 
         if not a.verify_run:
-            run.phase(templates[0], 'preflight', profiles[1])
-            run.phase(templates[0], 'send', profiles[0])
-        run.phase(templates[0], 'receive', profiles[1])
+            run.send_and_verify(templates[0])
+        else:
+            run.phase(templates[0], 'receive', profiles[1])
     except (Exception, KeyboardInterrupt) as e:
         run.state['error'] = str(e) or 'Interrupted'
         if run.state['status'] == 'sending': run.state['status'] = 'needs_recovery'
-        elif run.state['status'] not in ['accepted','failed_before_payment']: run.state['status'] = 'failed'
+        elif run.state['status'] not in ['accepted','failed_before_payment','needs_recovery']: run.state['status'] = 'failed'
         print('Stopped:', run.state['error'], file=sys.stderr)
     finally:
         if server:
@@ -469,7 +493,7 @@ def main():
         original.update(previous_status=original['status'],status='recipient_verified',message_id=a.message_id,
                         recipient_verification=str(run.folder),sender_receipt='unconfirmed')
         write(original_path,original)
-    return 0 if run.state['status'] == 'complete' else 1
+    return 0 if run.state['status'] in ['complete','recipient_verified'] else 1
 
 
 if __name__ == '__main__':

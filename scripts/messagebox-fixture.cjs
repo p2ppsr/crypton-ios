@@ -7,6 +7,7 @@ const express=load('express');const {createAuthMiddleware}=load('@bsv/auth-expre
 const timeoutQuotes=Number(process.env.CRYPTON_FIXTURE_TIMEOUT_QUOTES||0);
 if(!Number.isInteger(timeoutQuotes)||timeoutQuotes<0||timeoutQuotes>2)throw Error('Invalid fixture quote timeout count');
 deliveryFixture.quoteFaults=timeoutQuotes;
+if(process.env.CRYPTON_FIXTURE_DROP_DELIVERY_RESPONSE==='1')deliveryFixture.drop=true;
 const serverWallet=new ProtoWallet(new PrivateKey(2));const accepted=new Map();const senders=new Map();const acknowledged=new Set();
 const app=express();app.use(express.json({limit:'8mb'}));app.use(express.raw({type:'application/octet-stream',limit:'8mb'}));
 app.use((req,res,next)=>{if(req.path==='/.well-known/auth')deliveryFixture.authHandshakes++;next();});

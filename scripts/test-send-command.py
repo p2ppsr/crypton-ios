@@ -123,6 +123,63 @@ class Contract(unittest.TestCase):
             run.state['status']='accepted'
             run.event(evidence)
             self.assertEqual(run.state['status'],'accepted')
+    def test_recipient_fallback_requires_exact_settled_paid_submission_evidence(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Retained message',fixture=True,timeout=300),[{'device':'sender'},{'device':'peer'}])
+            run.state['status']='sending'
+            evidence={'run_id':run.plan['run_id'],'utc':'now','role':'send','stage':'failed','send_attempted':True,
+                      'delivery_id':'43054422-2771-4052-a058-af93cc9c0314','delivery_state':'SUBMITTING','has_saved_payment':True,'message_id':'a'*64}
+            for changes in [{'has_saved_payment':False},{'delivery_state':'PAYMENT_REQUESTED'},{'message_id':'bad'},{'delivery_id':'bad'},{'send_attempted':False}]:
+                run.event({**evidence,**changes})
+                self.assertFalse(run.state.get('verify_unconfirmed_submission',False))
+                run.state['status']='sending'
+            run.event(evidence)
+            self.assertTrue(run.state['verify_unconfirmed_submission'])
+            self.assertEqual(run.state['message_id'],'a'*64)
+    def test_missing_sender_receipt_verifies_peer_without_another_send(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Already paid',fixture=True,timeout=300),[{'device':'sender'},{'device':'peer'}])
+            phases=[]
+            def phase(template,role,profile):
+                phases.append(role)
+                if role=='send':
+                    run.state.update(verify_unconfirmed_submission=True,message_id='b'*64,sender_receipt='unconfirmed')
+                    raise RuntimeError('Submission response lost')
+                if role=='receive':
+                    self.assertEqual(run.state['message_id'],'b'*64);run.state['status']='complete'
+            with patch.object(run,'phase',side_effect=phase):run.send_and_verify(None)
+            self.assertEqual(phases,['preflight','send','receive'])
+            self.assertEqual(run.state['status'],'recipient_verified')
+            self.assertEqual(run.state['sender_receipt'],'unconfirmed')
+            self.assertEqual(run.state['sender_error'],'Submission response lost')
+    def test_failed_recipient_fallback_keeps_payment_recovery_protection(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Already paid',fixture=True,timeout=300),[{'device':'sender'},{'device':'peer'}])
+            phases=[]
+            def phase(template,role,profile):
+                phases.append(role)
+                if role=='send':
+                    run.state.update(verify_unconfirmed_submission=True,message_id='c'*64,sender_receipt='unconfirmed')
+                    raise RuntimeError('Lost sender receipt')
+                if role=='receive':raise RuntimeError('Peer unavailable')
+            with patch.object(run,'phase',side_effect=phase):
+                with self.assertRaisesRegex(RuntimeError,'Peer unavailable'):run.send_and_verify(None)
+            self.assertEqual(phases,['preflight','send','receive'])
+            self.assertEqual(run.state['status'],'needs_recovery')
+    def test_unproven_submission_cannot_enter_recipient_fallback(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Unpaid',fixture=True,timeout=300),[{'device':'sender'},{'device':'peer'}])
+            phases=[]
+            def phase(template,role,profile):
+                phases.append(role)
+                if role=='send':raise RuntimeError('No submission evidence')
+            with patch.object(run,'phase',side_effect=phase):
+                with self.assertRaisesRegex(RuntimeError,'No submission evidence'):run.send_and_verify(None)
+            self.assertEqual(phases,['preflight','send'])
     def test_pre_send_failure_without_a_claim_does_not_block_a_new_run(self):
         import threading
         with tempfile.TemporaryDirectory() as folder:

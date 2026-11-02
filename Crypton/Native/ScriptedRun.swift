@@ -117,6 +117,11 @@ import CryptoKit
                    let created = record["created"] as? Double, created >= sendingAfter {
                     fields["delivery_id"] = model.deliveryID; fields["delivery_state"] = record["state"]
                     if DeliveryStore.paymentNeverRequested(record) { fields["payment_not_requested"] = true }
+                    if record["state"] as? String == "SUBMITTING", record["payment"] is JSON,
+                       let prepared = record["prepared"] as? JSON, let messageID = prepared["messageId"] as? String,
+                       (try? InboxStore.messageID(messageID)) != nil {
+                        fields["has_saved_payment"] = true; fields["message_id"] = messageID
+                    }
                 }
                 event("failed",fields)
             }
