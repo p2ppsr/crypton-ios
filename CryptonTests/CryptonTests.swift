@@ -3,6 +3,71 @@ import AVFoundation
 @testable import Crypton
 
 final class CryptonTests: XCTestCase {
+    @MainActor func testEncryptedPreviewUsesRealCiphertextAndWaitsWhileHeld() async throws {
+        let suite = "crypton.preview." + UUID().uuidString, defaults = UserDefaults(suiteName:suite)!
+        defer { defaults.removePersistentDomain(forName:suite) }
+        let model = AppModel(defaults:defaults)
+        model.presentsEncryptedPreview = true; model.active(true)
+        let sealed = try envelope(), cipher = try Wire.envelope(sealed)["ciphertext"] as? String
+        var completed = false
+        let preview = Task { try await model.previewEncryptedMessage(sealed); completed = true }
+        for _ in 0..<100 where model.encryptedPreview == nil { try await Task.sleep(nanoseconds:5_000_000) }
+        XCTAssertEqual(model.encryptedPreview,cipher)
+        model.previewPressed = true
+        try await Task.sleep(nanoseconds:650_000_000)
+        XCTAssertFalse(completed); XCTAssertEqual(model.encryptedPreview,cipher)
+        model.previewHovered = true; model.previewPressed = false
+        try await Task.sleep(nanoseconds:100_000_000)
+        XCTAssertFalse(completed,"Pointer hover must hold the preview after a touch is released")
+        model.previewHovered = false
+        try await preview.value
+        XCTAssertTrue(completed); XCTAssertNil(model.encryptedPreview)
+    }
+    @MainActor func testCancellingHeldEncryptedPreviewDoesNotContinueSend() async throws {
+        let suite = "crypton.preview.cancel." + UUID().uuidString, defaults = UserDefaults(suiteName:suite)!
+        defer { defaults.removePersistentDomain(forName:suite) }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:folder) }
+        let model = AppModel(defaults:defaults,store:try DeliveryStore(directory:folder))
+        model.presentsEncryptedPreview = true; model.active(true)
+        let sealed = try envelope()
+        var continued = false
+        let preview = Task { try await model.previewEncryptedMessage(sealed); continued = true }
+        for _ in 0..<100 where model.encryptedPreview == nil { try await Task.sleep(nanoseconds:5_000_000) }
+        model.previewPressed = true; preview.cancel()
+        do { try await preview.value; XCTFail("Cancelled preview continued to sending") } catch is CancellationError { }
+        XCTAssertFalse(continued); XCTAssertNil(model.encryptedPreview)
+        XCTAssertTrue(try model.store.list().isEmpty)
+    }
+    @MainActor func testNormalModeDefaultsAndAdvancedPreferencePreserveWalletSettings() throws {
+        let suite = "crypton.mode." + UUID().uuidString, defaults = UserDefaults(suiteName:suite)!
+        defer { defaults.removePersistentDomain(forName:suite) }
+        let fresh = AppModel(defaults:defaults)
+        XCTAssertFalse(fresh.advancedMode); XCTAssertFalse(fresh.soundEnabled)
+        XCTAssertEqual(fresh.screen,.home,"Normal mode opens directly on the composer")
+        defaults.set("json",forKey:"walletMode"); defaults.set("https://wallet.example",forKey:"walletEndpoint")
+        defaults.set(true,forKey:"legacyMessages"); defaults.set(true,forKey:"disappearSend"); defaults.set(true,forKey:"disappearReceive")
+        let existing = AppModel(defaults:defaults)
+        XCTAssertFalse(existing.advancedMode)
+        existing.advancedMode = true
+        let reopened = AppModel(defaults:defaults)
+        XCTAssertTrue(reopened.advancedMode)
+        reopened.advancedMode = false
+        XCTAssertEqual(reopened.walletMode,"json"); XCTAssertEqual(reopened.endpoint,"https://wallet.example")
+        XCTAssertTrue(reopened.legacy); XCTAssertTrue(reopened.disappearSend); XCTAssertTrue(reopened.disappearReceive)
+        XCTAssertFalse(AppModel(defaults:defaults).advancedMode)
+    }
+    @MainActor func testEditingRecipientSearchInvalidatesSelectedRecipientWithoutLosingDraft() {
+        let suite = "crypton.recipient." + UUID().uuidString, defaults = UserDefaults(suiteName:suite)!
+        defer { defaults.removePersistentDomain(forName:suite) }
+        let model = AppModel(defaults:defaults)
+        model.choose("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",name:"First recipient")
+        XCTAssertTrue(model.recipientChosen)
+        model.message = "Keep my draft"
+        model.recipientQuery = "Different recipient"
+        XCTAssertFalse(model.recipientChosen,"Editing a query must require a new explicit recipient selection")
+        XCTAssertEqual(model.message,"Keep my draft")
+    }
     @MainActor func testScriptedWarmRunReusesEngineAndRejectsChangedRuntime() async throws {
         let defaults = UserDefaults(suiteName:"scripted-warm-"+UUID().uuidString)!
         defaults.set(false,forKey:"legacyMessages"); defaults.set(false,forKey:"soundEnabled")

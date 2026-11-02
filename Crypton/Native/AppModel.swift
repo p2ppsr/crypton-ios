@@ -33,6 +33,7 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     @Published var sharedIdentity:PublicContact?
     var identityShareText:String { sharedIdentity?.shareText ?? output }
     @Published var recipientQuery = "" { didSet { if recipientQuery != oldValue { clearSearch() } } }
+    @Published private(set) var recipientChosen = false
     @Published private(set) var searchResults: [DiscoveredIdentity] = []
     @Published private(set) var searchCompleted = false
     @Published private(set) var selectedIdentity: DiscoveredIdentity?
@@ -66,6 +67,14 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     @Published var walletMode: String
     @Published var endpoint: String
     @Published var soundEnabled: Bool { didSet { defaults.set(soundEnabled,forKey:"soundEnabled"); sound.enabled = soundEnabled } }
+    @Published var advancedMode: Bool { didSet { defaults.set(advancedMode,forKey:"advancedMode") } }
+    @Published private(set) var encryptedPreview:String?
+    @Published var previewHovered = false
+    @Published var previewPressed = false
+    var presentsEncryptedPreview = false
+    #if DEBUG
+    private var holdPreviewForQA = false
+    #endif
     let store: DeliveryStore
     let sound = SoundPlayer()
     private let defaults: UserDefaults
@@ -88,6 +97,11 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
         }
         #endif
         self.defaults = defaults
+        advancedMode = defaults.bool(forKey:"advancedMode")
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--uitesting"), ProcessInfo.processInfo.arguments.contains("--advanced-mode") { advancedMode = true }
+        if ["--uitesting","--sdk-wallet-fixture","--messagebox-fixture","--hold-encrypted-preview-for-qa"].allSatisfy(ProcessInfo.processInfo.arguments.contains) { holdPreviewForQA = true }
+        #endif
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--uitesting"), ProcessInfo.processInfo.arguments.contains("--messagebox-fixture") {
             let directory = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("UITestDeliveries")
@@ -110,12 +124,12 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
         walletMode = defaults.string(forKey:"walletMode") ?? "me"
         legacy = defaults.object(forKey:"legacyMessages") as? Bool ?? (defaults.string(forKey:"walletMode") == "portal")
         endpoint = defaults.string(forKey:"walletEndpoint") ?? ""
-        soundEnabled = defaults.object(forKey:"soundEnabled") as? Bool ?? true
+        soundEnabled = defaults.object(forKey:"soundEnabled") as? Bool ?? false
         if let data = defaults.data(forKey:"publicContacts"), let saved = try? JSONDecoder().decode([PublicContact].self,from:data) { contacts = saved }
         sound.enabled = soundEnabled
         configureWallet()
         if let wallet = wallet { self.wallet = wallet }
-        if !defaults.bool(forKey:"guideSeen") && !ProcessInfo.processInfo.arguments.contains("--uitesting") { screen = .guide }
+        if advancedMode && !defaults.bool(forKey:"guideSeen") && !ProcessInfo.processInfo.arguments.contains("--uitesting") { screen = .guide }
     }
     private func configureWallet() {
         clearSearch()
@@ -202,7 +216,7 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
             do { try await work() } catch { self.error = error.localizedDescription; self.status = self.screen == .delivery ? "Delivery paused · open the saved record" : "Request paused · " + self.activity }
         }
     }
-    func cancel() { engine?.cancel(); wallet?.cancel(); task?.cancel(); portalVisible = false }
+    func cancel() { engine?.cancel(); wallet?.cancel(); task?.cancel(); portalVisible = false; encryptedPreview = nil; previewHovered = false; previewPressed = false }
     func connect(showPortal: Bool = false) {
         perform { [self] in
             if let portal = portal { try await portal.authenticate(); portalVisible = showPortal }
@@ -223,10 +237,11 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
             peer = key; peerName = code?.name ?? name; peerWalletIdentity = deliveryKey
             recipientWalletDraft = deliveryKey ?? (defaults.dictionary(forKey:"deliveryKeys") as? [String:String])?[key] ?? ""
             selectedIdentity = nil; recipientSaved = false; screen = .compose
+            recipientChosen = true
         }
         catch { self.error = error.localizedDescription }
     }
-    private func clearSearch() { searchResults = []; searchCompleted = false; selectedIdentity = nil; recipientSaved = false }
+    private func clearSearch() { searchResults = []; searchCompleted = false; selectedIdentity = nil; recipientSaved = false; recipientChosen = false }
     func searchRecipients() {
         guard !busy else { return }
         clearSearch()
@@ -281,6 +296,8 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
                 guard let result = try await connection().call(decrypting ? "decrypt" : "encrypt",args,raw:false) as? String, result.utf8.count <= 100_000 else { throw CryptonError("Invalid wallet response.") }
                 output = result; outputKind = decrypting ? "message" : "encrypted"
             }
+            if sendWithMessageBox { try await previewEncryptedMessage(output) }
+            try Task.checkCancellation()
             screen = .result
             if sendWithMessageBox {
                 guard !decrypting, !legacy else { throw CryptonError("MessageBox requires a Crypton v2 message.") }
@@ -300,6 +317,34 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
                 else { status = "MessageBox delivery complete" }
             } else { status = decrypting ? "Message decrypted" : "Message encrypted" }
         }
+    }
+    /// Preview the actual ciphertext before creating any delivery/payment intent.
+    /// Time only advances while the preview is visible and not held by the user.
+    func previewEncryptedMessage(_ envelope:String) async throws {
+        guard presentsEncryptedPreview, !advancedMode else { return }
+        let value = try Wire.envelope(envelope)
+        guard let ciphertext = value["ciphertext"] as? String else { throw CryptonError("Invalid encrypted preview.") }
+        encryptedPreview = ciphertext; previewHovered = false; previewPressed = false
+        #if DEBUG
+        // Only the explicitly opted-in disposable UI fixture can hold the
+        // short preview for a deterministic, zero-payment cancellation check.
+        previewPressed = holdPreviewForQA
+        #endif
+        activity = "Message encrypted · hold to inspect"; status = activity
+        NSLog("Crypton lifecycle encryptedPreview.presented")
+        defer { encryptedPreview = nil; previewHovered = false; previewPressed = false }
+        var remaining:TimeInterval = 0.5
+        while remaining > 0 {
+            try Task.checkCancellation()
+            let began = ProcessInfo.processInfo.systemUptime
+            let counting = foreground && !previewHovered && !previewPressed
+            try await Task.sleep(nanoseconds:10_000_000)
+            if counting && foreground && !previewHovered && !previewPressed {
+                remaining -= ProcessInfo.processInfo.systemUptime - began
+            }
+        }
+        try Task.checkCancellation()
+        NSLog("Crypton lifecycle encryptedPreview.completed")
     }
     @Published var legacySenderSelected = false
     func identity(root: Bool = false) {

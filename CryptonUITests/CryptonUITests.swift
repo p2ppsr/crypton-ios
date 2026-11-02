@@ -1,6 +1,107 @@
 import XCTest
 
 final class CryptonUITests: XCTestCase {
+    @MainActor func testNormalComposerDryRunCancelsPreviewBeforePayment() async throws {
+        continueAfterFailure = false
+        let recipient:String, before:Int
+        do {
+            recipient = try await fixture("recipient")["publicKey"] as! String
+            before = (try await fixture("delivery-stats")["payments"] as? NSNumber)?.intValue ?? 0
+        } catch { throw XCTSkip("Start disposable MessageBox fixtures") }
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting","--sdk-wallet-fixture","--messagebox-fixture","--reset-qa-outbox","--hold-encrypted-preview-for-qa"]
+        app.launch()
+        func capture(_ name:String) {
+            let image = XCTAttachment(screenshot:app.screenshot()); image.name = name; image.lifetime = .keepAlways; add(image)
+        }
+        let query = app.textFields["normalRecipientSearch"]
+        XCTAssertTrue(query.waitForExistence(timeout:10)); capture("Dry run 1 - normal first screen")
+        query.tap(); query.typeText("bob@example.com"); app.buttons["normalRecipientSearchButton"].tap()
+        let match = app.buttons["selectRecipient-" + recipient]
+        XCTAssertTrue(match.waitForExistence(timeout:30)); capture("Dry run 2 - identity dropdown")
+        match.tap()
+        let stamp = ISO8601DateFormatter().string(from:Date()), marker = UUID().uuidString
+        print("CRYPTON_DRY_RUN composed_utc=\(stamp) run=\(marker) no_payment=true")
+        app.textViews["messageEditor"].tap()
+        app.textViews["messageEditor"].typeText("Normal retained encrypted dry run. No payment. Composed: " + stamp + "; run: " + marker)
+        app.buttons["messageInputDone"].tap(); capture("Dry run 3 - selected recipient and message")
+        app.buttons["normalSendButton"].tap()
+        let preview = app.staticTexts["encryptedPreviewText"]
+        XCTAssertTrue(preview.waitForExistence(timeout:30)); capture("Dry run 4 - actual encrypted preview held for inspection")
+        XCTAssertFalse(preview.label.contains("Normal retained encrypted dry run"))
+        let held = (try await fixture("delivery-stats")["payments"] as? NSNumber)?.intValue ?? 0
+        XCTAssertEqual(held,before)
+        app.buttons["Cancel send"].tap()
+        XCTAssertFalse(preview.waitForExistence(timeout:1))
+        if app.alerts["Crypton"].exists { app.alerts["Crypton"].buttons["OK"].tap() }
+        app.buttons["Sent"].tap()
+        XCTAssertTrue(app.staticTexts["No sent messages yet."].waitForExistence(timeout:5))
+        capture("Dry run 5 - cancelled before creating a delivery or payment")
+        let after = (try await fixture("delivery-stats")["payments"] as? NSNumber)?.intValue ?? 0
+        XCTAssertEqual(after,before,"The entire UI dry run must stop before wallet payment")
+    }
+    @MainActor func testNormalFirstScreenSearchSendAndRetainedInbox() async throws {
+        continueAfterFailure = false
+        let before:Int, recipient:String, seeded:[String:Any]
+        do {
+            before = (try await fixture("delivery-stats")["payments"] as? NSNumber)?.intValue ?? 0
+            recipient = try await fixture("recipient")["publicKey"] as! String
+            seeded = try await fixture("seed-inbox",["count":1])
+        } catch { throw XCTSkip("Start disposable MessageBox fixtures") }
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting","--sdk-wallet-fixture","--messagebox-fixture","--reset-qa-outbox","--reset-qa-inbox"]
+        app.launch()
+        let search = app.textFields["normalRecipientSearch"], send = app.buttons["normalSendButton"]
+        XCTAssertTrue(search.waitForExistence(timeout:10))
+        XCTAssertTrue(app.textViews["messageEditor"].exists)
+        XCTAssertTrue(send.exists); XCTAssertFalse(send.isEnabled)
+        XCTAssertFalse(app.buttons["Decrypt message"].exists)
+        XCTAssertFalse(app.buttons["Encrypt message"].exists)
+        let first = XCTAttachment(screenshot:app.screenshot()); first.name = "Normal first screen - recipient message Send"; first.lifetime = .keepAlways; add(first)
+        search.tap(); search.typeText("bob@example.com")
+        app.buttons["normalRecipientSearchButton"].tap()
+        let match = app.buttons["selectRecipient-"+recipient]
+        XCTAssertTrue(match.waitForExistence(timeout:30))
+        let dropdown = XCTAttachment(screenshot:app.screenshot()); dropdown.name = "Normal certified recipient dropdown"; dropdown.lifetime = .keepAlways; add(dropdown)
+        match.tap()
+        XCTAssertTrue(app.otherElements["normalSelectedRecipient"].exists || app.staticTexts["normalSelectedRecipient"].exists)
+        let editor = app.textViews["messageEditor"]
+        editor.tap(); editor.typeText("Normal composer fixture. Composed: " + ISO8601DateFormatter().string(from:Date()) + "; run: " + UUID().uuidString)
+        app.buttons["messageInputDone"].tap()
+        XCTAssertTrue(send.isEnabled); send.tap()
+        XCTAssertTrue(app.staticTexts["Accepted by MessageBox"].waitForExistence(timeout:60))
+        XCTAssertFalse(app.buttons["Share encrypted payload"].exists)
+        let after = (try await fixture("delivery-stats")["payments"] as? NSNumber)?.intValue
+        XCTAssertEqual(after,before+1)
+        app.buttons["Inbox"].tap(); app.buttons["Refresh inbox"].tap()
+        let id = (seeded["ids"] as! [String])[0], row = app.buttons["inbox-" + id]
+        XCTAssertTrue(row.waitForExistence(timeout:30)); row.tap()
+        app.buttons["Decrypt message"].tap()
+        XCTAssertTrue(app.staticTexts["inboxPlaintext"].waitForExistence(timeout:30))
+        XCTAssertEqual(app.staticTexts["inboxPlaintext"].label,"Android inbox fixture message 0")
+        app.buttons["Back to inbox"].tap(); XCTAssertTrue(row.waitForExistence(timeout:5)); row.tap()
+        app.buttons["Decrypt message"].tap()
+        XCTAssertTrue(app.staticTexts["inboxPlaintext"].waitForExistence(timeout:30))
+        XCTAssertEqual(app.staticTexts["inboxPlaintext"].label,"Android inbox fixture message 0")
+    }
+    @MainActor func testAdvancedModeCanBeEnabledAndHiddenAgain() throws {
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting"]; app.launch()
+        app.buttons["Settings"].tap()
+        XCTAssertTrue(app.switches["advancedMode"].waitForExistence(timeout:5))
+        XCTAssertFalse(app.buttons["Save wallet connection"].exists)
+        XCTAssertFalse(app.switches["Legacy iPhone message format"].exists)
+        XCTAssertFalse(app.switches["Music and sound effects"].exists)
+        app.switches["advancedMode"].tap()
+        XCTAssertTrue(app.buttons["Save wallet connection"].waitForExistence(timeout:5))
+        XCTAssertTrue(app.switches["Legacy iPhone message format"].exists)
+        app.buttons["Crypton home"].tap()
+        XCTAssertTrue(app.buttons["Decrypt message"].exists)
+        app.buttons["Settings"].tap(); app.switches["advancedMode"].tap()
+        XCTAssertFalse(app.buttons["Save wallet connection"].exists)
+        app.buttons["Crypton home"].tap()
+        XCTAssertTrue(app.textFields["normalRecipientSearch"].exists)
+        XCTAssertFalse(app.buttons["Decrypt message"].exists)
+    }
     #if ME_BOB_SMOKE_TEST
     // Opt-in only: install the separately built ME Bob app on Crypton-iOS-Test
     // and run scripts/me-bob-launch-fixture.cjs, then dispatch the Bob scheme to
@@ -22,7 +123,7 @@ final class CryptonUITests: XCTestCase {
         let seeded:[String:Any]
         do { _ = try await fixture("ack-mode",["mode":"normal"]); seeded = try await fixture("seed-inbox",["count":1]) }
         catch { throw XCTSkip("Start disposable MessageBox fixtures") }
-        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--sdk-wallet-fixture","--messagebox-fixture","--reset-qa-outbox","--reset-qa-inbox"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--advanced-mode","--sdk-wallet-fixture","--messagebox-fixture","--reset-qa-outbox","--reset-qa-inbox"]; app.launch()
         if privateReceive || privateSend {
             app.buttons["Settings"].tap()
             let target = app.switches[privateReceive ? "Received: decrypt once and remove" : "Sent: remove after confirmed delivery"]
@@ -35,7 +136,7 @@ final class CryptonUITests: XCTestCase {
         let receiving = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
         let delivery = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
         let code = String(decoding:try JSONSerialization.data(withJSONObject:["protocol":"crypton-contact","version":1,"name":"Peer iOS","receivingKey":receiving,"walletIdentity":delivery],options:[.sortedKeys]),as:UTF8.self)
-        let app = XCUIApplication(); app.launchArguments = ["--uitesting"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--advanced-mode"]; app.launch()
         app.buttons["New message"].tap()
         let entry = app.textViews["Identity public key"]; XCTAssertTrue(entry.waitForExistence(timeout:5))
         entry.tap(); entry.typeText(code)
@@ -52,7 +153,7 @@ final class CryptonUITests: XCTestCase {
         do { before = (try await fixture("delivery-stats")["payments"] as? NSNumber)?.intValue ?? 0 }
         catch { throw XCTSkip("Start disposable MessageBox fixtures") }
         let app = XCUIApplication()
-        app.launchArguments = ["--uitesting","--sdk-wallet-fixture","--messagebox-fixture","--reset-qa-outbox"]
+        app.launchArguments = ["--uitesting","--advanced-mode","--sdk-wallet-fixture","--messagebox-fixture","--reset-qa-outbox"]
         app.launch()
         app.buttons["New message"].tap(); app.buttons["Myself"].tap()
         let editor = app.textViews["messageEditor"]; XCTAssertTrue(editor.waitForExistence(timeout:5))
@@ -63,7 +164,7 @@ final class CryptonUITests: XCTestCase {
         XCTAssertEqual(app.buttons["walletStatus"].label,"MessageBox delivery complete")
         let after = (try await fixture("delivery-stats")["payments"] as? NSNumber)?.intValue ?? 0
         XCTAssertEqual(after,before+1)
-        app.terminate(); app.launchArguments = ["--uitesting","--sdk-wallet-fixture","--messagebox-fixture"]; app.launch()
+        app.terminate(); app.launchArguments = ["--uitesting","--advanced-mode","--sdk-wallet-fixture","--messagebox-fixture"]; app.launch()
         app.buttons["MessageBox outbox"].tap()
         XCTAssertTrue(app.buttons["Myself · SENT"].waitForExistence(timeout:5))
     }
@@ -107,7 +208,7 @@ final class CryptonUITests: XCTestCase {
         let recipient:[String:Any]
         do { recipient = try await fixture("recipient") } catch { throw XCTSkip("Start the disposable SDK fixture") }
         let statsBefore = try await fixture("discovery-stats")
-        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--sdk-wallet-fixture","--messagebox-fixture","--reset-qa-outbox"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--advanced-mode","--sdk-wallet-fixture","--messagebox-fixture","--reset-qa-outbox"]; app.launch()
         app.buttons["New message"].tap()
         let query = app.textFields["recipientSearchQuery"].exists ? app.textFields["recipientSearchQuery"] : app.textViews["recipientSearchQuery"]
         query.tap(); query.typeText("bob@example.com")
@@ -135,7 +236,7 @@ final class CryptonUITests: XCTestCase {
     }
     @MainActor func testRecipientSearchEmptyAndEditingClearsResults() async throws {
         do { _ = try await fixture("recipient") } catch { throw XCTSkip("Start the disposable SDK fixture") }
-        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--sdk-wallet-fixture"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--advanced-mode","--sdk-wallet-fixture"]; app.launch()
         app.buttons["New message"].tap()
         let query = app.textFields["recipientSearchQuery"].exists ? app.textFields["recipientSearchQuery"] : app.textViews["recipientSearchQuery"]
         query.tap(); query.typeText("empty@example.com"); app.swipeUp(); app.buttons["Search"].tap()
@@ -147,7 +248,7 @@ final class CryptonUITests: XCTestCase {
     }
     override func setUpWithError() throws { continueAfterFailure = false }
     func app() -> XCUIApplication {
-        let app = XCUIApplication(); app.launchArguments = ["--uitesting"]; app.launch(); return app
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--advanced-mode"]; app.launch(); return app
     }
     func testHomeComposeAndLegacySenderSelection() {
         let app = app()
@@ -181,7 +282,7 @@ final class CryptonUITests: XCTestCase {
     @MainActor func testFilesQRExportImportRoundTrip() async throws { try await filesRoundTrip(image:true) }
     @MainActor func testPhotoExportAndIdentityPhotoImport() async throws {
         do { _ = try await fixture("recipient") } catch { throw XCTSkip("Start the disposable SDK fixture") }
-        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--sdk-wallet-fixture"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--advanced-mode","--sdk-wallet-fixture"]; app.launch()
         app.buttons["My identity"].tap()
         guard app.staticTexts["resultText"].waitForExistence(timeout:15) else { XCTFail("Identity unavailable"); return }
         let identity = app.staticTexts["resultText"].label
@@ -205,7 +306,7 @@ final class CryptonUITests: XCTestCase {
         do {
             guard try await fixture("qa-config")["heicReady"] as? Bool == true else { throw XCTSkip("Run scripts/test-ios.sh with CRYPTON_SDK_ROOT to seed the HEIC fixture") }
         } catch { throw XCTSkip("Run scripts/test-ios.sh with CRYPTON_SDK_ROOT to seed the HEIC fixture") }
-        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--sdk-wallet-fixture"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--advanced-mode","--sdk-wallet-fixture"]; app.launch()
         app.buttons["Contacts"].tap(); app.buttons["QR image"].tap()
         let photo = app.images.matching(identifier:"PXGGridLayout-Info").firstMatch
         guard photo.waitForExistence(timeout:10) else { XCTFail("HEIC photo fixture missing"); return }; photo.tap()
@@ -217,7 +318,7 @@ final class CryptonUITests: XCTestCase {
     @MainActor private func filesRoundTrip(image:Bool) async throws {
         do { _ = try await fixture("recipient") } catch { throw XCTSkip("Start the disposable SDK fixture") }
         let plaintext = image ? "QR file import QA-20261030" : "Text file import QA-20261030"
-        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--sdk-wallet-fixture"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--advanced-mode","--sdk-wallet-fixture"]; app.launch()
         app.buttons["New message"].tap(); app.buttons["Myself"].tap()
         app.textViews["messageEditor"].tap(); app.textViews["messageEditor"].typeText(plaintext)
         app.swipeUp(); app.buttons["Encrypt message"].tap()
@@ -251,7 +352,7 @@ final class CryptonUITests: XCTestCase {
         let nested:[String:Any]
         do { nested = try await fixture("nested-for-ios") } catch { throw XCTSkip("Start the disposable SDK fixture") }
         let envelope = nested["envelope"] as! String
-        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--sdk-wallet-fixture"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--advanced-mode","--sdk-wallet-fixture"]; app.launch()
         app.buttons["Decrypt message"].tap()
         let editor = app.textViews["messageEditor"]
         editor.tap(); editor.typeText(envelope)
@@ -270,7 +371,7 @@ final class CryptonUITests: XCTestCase {
         do { initial = try await fixture("delivery-stats") } catch { throw XCTSkip("Start the disposable MessageBox fixture") }
         let before = initial["payments"] as! Int
         let app = XCUIApplication()
-        let arguments = ["--uitesting","--sdk-wallet-fixture","--messagebox-fixture"]
+        let arguments = ["--uitesting","--advanced-mode","--sdk-wallet-fixture","--messagebox-fixture"]
         app.launchArguments = arguments + ["--reset-qa-outbox"]; app.launch()
         app.buttons["New message"].tap(); app.buttons["Myself"].tap()
         app.textViews["messageEditor"].tap(); app.textViews["messageEditor"].typeText("Disposable force-quit test")
@@ -304,7 +405,7 @@ final class CryptonUITests: XCTestCase {
         request.setValue("https://crypton.ios",forHTTPHeaderField:"Origin")
         do { let (_,r) = try await URLSession.shared.data(for:request); if (r as? HTTPURLResponse)?.statusCode != 200 { throw NSError(domain:"fixture",code:1) } }
         catch { throw XCTSkip("Start the SDK fixture for share-extension interoperability tests.") }
-        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--sdk-wallet-fixture"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--uitesting","--advanced-mode","--sdk-wallet-fixture"]; app.launch()
         app.buttons["New message"].tap(); app.buttons["Myself"].tap()
         app.textViews["messageEditor"].tap(); app.textViews["messageEditor"].typeText("Shared through the native iOS extension")
         app.swipeUp(); app.buttons["Encrypt message"].tap()

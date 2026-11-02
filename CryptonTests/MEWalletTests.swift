@@ -378,6 +378,36 @@ final class MEWalletTests: XCTestCase {
 }
 
 final class MEAndDeliveryIntegrationTests: XCTestCase {
+    @MainActor func testNormalPreviewHoldAndCancellationNeverRequestPayment() async throws {
+        try await available()
+        let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "crypton.preview.payment."+UUID().uuidString, defaults = UserDefaults(suiteName:suite)!
+        defer { try? FileManager.default.removeItem(at:folder); defaults.removePersistentDomain(forName:suite) }
+        let store = try DeliveryStore(directory:folder,fixtureHost:config["host"] as! String,fixtureAgent:config["agent"] as! String)
+        let page = MEPageFixture(); defer { page.close() }
+        let model = AppModel(defaults:defaults,store:store,wallet:page.wallet)
+        model.presentsEncryptedPreview = true; model.active(true)
+        model.choose("self",name:"Fixture self"); model.message = "Cancel this disposable encrypted preview before payment"
+        let before = integer(try await fixture("delivery-stats")["payments"])
+        model.process(sendWithMessageBox:true)
+        for _ in 0..<1000 {
+            if model.encryptedPreview != nil || !model.busy { break }
+            try await Task.sleep(nanoseconds:10_000_000)
+        }
+        XCTAssertNotNil(model.encryptedPreview)
+        model.previewPressed = true
+        try await Task.sleep(nanoseconds:600_000_000)
+        XCTAssertNotNil(model.encryptedPreview)
+        XCTAssertTrue(try store.list().isEmpty,"No delivery or payment intent can precede the preview")
+        let heldStats = try await fixture("delivery-stats")
+        XCTAssertEqual(integer(heldStats["payments"]),before)
+        model.cancel()
+        for _ in 0..<100 where model.busy { try await Task.sleep(nanoseconds:10_000_000) }
+        XCTAssertFalse(model.busy); XCTAssertNil(model.encryptedPreview)
+        let after = try await fixture("delivery-stats")
+        XCTAssertEqual(integer(after["payments"]),before)
+        XCTAssertTrue(try store.list().isEmpty)
+    }
     @MainActor func testNativeMEInboxRetrievalDecryptionAndRemoval() async throws {
         try await available()
         _ = try await fixture("ack-mode",["mode":"normal"])

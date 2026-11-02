@@ -18,6 +18,8 @@ struct CryptonView: View {
     @State private var filePicker = false
     @State private var clearConfirm = false
     @State private var copied = false
+    @State private var showRecipientDropdown = false
+    @FocusState private var recipientSearchFocused:Bool
     var body: some View {
         ZStack {
             Color(red:0.025,green:0.045,blue:0.075).ignoresSafeArea()
@@ -36,8 +38,27 @@ struct CryptonView: View {
                     VStack(alignment:.leading,spacing:18) { content }
                         .frame(maxWidth:620,alignment:.leading).padding(24).frame(maxWidth:.infinity)
                 }.scrollDismissesKeyboard(.interactively)
+                if !model.advancedMode {
+                    HStack {
+                        normalTab("Send","square.and.pencil") { model.decrypting = false; model.screen = .home }
+                        normalTab("Inbox","tray.and.arrow.down") { model.showInbox() }
+                        normalTab("Sent","paperplane") { model.screen = .outbox }
+                        normalTab("Contacts","person.2") { model.decrypting = false; model.screen = .contacts }
+                    }.padding(.horizontal,16).padding(.vertical,12).background(panel)
+                }
             }.disabled(model.busy)
-            if model.busy {
+            if let ciphertext = model.encryptedPreview {
+                Color.black.opacity(0.75).ignoresSafeArea()
+                VStack(alignment:.leading,spacing:18) {
+                    Label("Message encrypted",systemImage:"lock.shield.fill").font(.title2.bold()).foregroundStyle(mint)
+                    ScrollView { Text(ciphertext).font(.system(.footnote,design:.monospaced)).frame(maxWidth:.infinity,alignment:.leading).accessibilityIdentifier("encryptedPreviewText") }.frame(maxHeight:280)
+                    Text(model.previewHovered || model.previewPressed ? "Preview held · release or move the pointer away to continue" : "Hold to inspect · sending continues automatically").font(.footnote).foregroundStyle(.secondary)
+                    Button("Cancel send") { model.cancel() }.tint(mint)
+                }.padding(24).frame(maxWidth:570).background(panel,in:RoundedRectangle(cornerRadius:18)).padding(24)
+                    .frame(maxWidth:.infinity,maxHeight:.infinity).contentShape(Rectangle())
+                    .onHover { model.previewHovered = $0 }
+                    .simultaneousGesture(DragGesture(minimumDistance:0).onChanged { _ in model.previewPressed = true }.onEnded { _ in model.previewPressed = false })
+            } else if model.busy {
                 VStack(spacing:18) { ProgressView().tint(mint); Text(model.activity); Button("Cancel request") { model.cancel() }.tint(mint) }
                     .padding(28).background(panel,in:RoundedRectangle(cornerRadius:18)).shadow(radius:30)
             }
@@ -77,6 +98,7 @@ struct CryptonView: View {
         .onReceive(NotificationCenter.default.publisher(for:UIApplication.didBecomeActiveNotification)) { _ in model.active(true) }
         .onReceive(NotificationCenter.default.publisher(for:UIApplication.willResignActiveNotification)) { _ in model.active(false) }
         .onAppear {
+            model.presentsEncryptedPreview = true
             model.active(true)
             #if targetEnvironment(simulator)
             model.startScriptIfRequested()
@@ -87,7 +109,7 @@ struct CryptonView: View {
         switch model.screen {
         case .home: home
         case .recipient: recipient
-        case .compose: compose
+        case .compose: if model.advancedMode || model.decrypting { compose } else { normalComposer }
         case .result: result
         case .contacts: contacts
         case .settings: settings
@@ -120,6 +142,9 @@ struct CryptonView: View {
     private func back(_ screen:Screen = .home) -> some View { Button("Back") { model.screen = screen }.padding(.vertical,8) }
     private var home: some View {
         VStack(alignment:.leading,spacing:20) {
+            if !model.advancedMode {
+                normalComposer
+            } else {
             Text("PRIVATE BY DESIGN").font(.system(.caption,design:.monospaced,weight:.bold)).tracking(3).foregroundStyle(mint)
             title("A secret worth\nsharing.","Turn a message into an encrypted QR code. Only its recipient can open it.")
             Image("logonew").resizable().scaledToFit().frame(height:104).frame(maxWidth:.infinity).padding(.vertical,14).accessibilityHidden(true)
@@ -132,6 +157,64 @@ struct CryptonView: View {
             action("MessageBox outbox","tray") { model.screen = .outbox }
             action("MessageBox inbox","tray.and.arrow.down",primary:true) { model.showInbox() }
             Text("Your wallet holds your root keys. Crypton stores public contacts and encrypted message records.").font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+    }
+    private func normalTab(_ text:String,_ icon:String,work:@escaping () -> Void) -> some View {
+        Button(action:work) {
+            VStack(spacing:4) { Image(systemName:icon); Text(text).font(.caption) }.frame(maxWidth:.infinity)
+        }.foregroundStyle(.white)
+    }
+    private var normalCanSend:Bool {
+        model.recipientChosen && !model.message.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && !model.legacy && (model.peer == "self" || !model.recipientWalletDraft.isEmpty)
+    }
+    private var normalComposer: some View {
+        VStack(alignment:.leading,spacing:16) {
+            title("New message")
+            Text("To").font(.subheadline).foregroundStyle(.secondary)
+            HStack {
+                TextField("Search by name, email or handle",text:$model.recipientQuery)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search)
+                    .focused($recipientSearchFocused).accessibilityIdentifier("normalRecipientSearch")
+                    .onSubmit { showRecipientDropdown = true; model.searchRecipients() }
+                    .onChange(of:model.recipientQuery) { _ in showRecipientDropdown = true }
+                Button { recipientSearchFocused = false; showRecipientDropdown = true; model.searchRecipients() } label: { Image(systemName:"magnifyingglass") }
+                    .accessibilityLabel("Search recipients").accessibilityIdentifier("normalRecipientSearchButton")
+            }.padding(16).background(panel,in:RoundedRectangle(cornerRadius:12))
+            if !model.recipientChosen && (showRecipientDropdown || recipientSearchFocused) {
+                VStack(alignment:.leading,spacing:12) {
+                    ForEach(model.contacts.filter { model.recipientQuery.isEmpty || $0.name.localizedCaseInsensitiveContains(model.recipientQuery) }.prefix(8)) { contact in
+                        Button { model.chooseContact(contact); showRecipientDropdown = false; recipientSearchFocused = false } label: {
+                            Label(contact.name,systemImage:"person.crop.circle").frame(maxWidth:.infinity,alignment:.leading)
+                        }
+                    }
+                    ForEach(model.searchResults) { identity in
+                        Button { model.chooseDiscovered(identity); showRecipientDropdown = false; recipientSearchFocused = false } label: {
+                            VStack(alignment:.leading,spacing:4) { Text(identity.name).fontWeight(.semibold); Text(identity.certification).font(.caption).foregroundStyle(.secondary) }
+                                .frame(maxWidth:.infinity,alignment:.leading)
+                        }.accessibilityIdentifier("selectRecipient-" + identity.key)
+                    }
+                    if model.searchCompleted && model.searchResults.isEmpty {
+                        Text("No matches found. Check the spelling or add their Crypton contact code in Contacts.").font(.footnote).foregroundStyle(.secondary)
+                    }
+                }.padding(16).background(panel,in:RoundedRectangle(cornerRadius:12))
+            }
+            if model.recipientChosen {
+                Label(model.peerName,systemImage:"checkmark.circle.fill").foregroundStyle(mint).accessibilityIdentifier("normalSelectedRecipient")
+                if !model.legacy && model.peer != "self" && model.recipientWalletDraft.isEmpty {
+                    Text("Ask this person to share their Crypton contact code and add it in Contacts to enable delivery.").font(.footnote).foregroundStyle(.orange)
+                }
+            }
+            Text("Message").font(.subheadline).foregroundStyle(.secondary)
+            MessageEditor(text:$model.message).padding(12).frame(height:180).background(panel,in:RoundedRectangle(cornerRadius:12))
+                .onChange(of:model.message) { value in if value.utf16.count > 16_000 { model.message = String(value.prefix(16_000)) } }
+            action("Send","paperplane",primary:true) { model.decrypting = false; model.process(sendWithMessageBox:true) }
+                .accessibilityIdentifier("normalSendButton")
+                .disabled(!normalCanSend).opacity(normalCanSend ? 1 : 0.45)
+            if model.legacy {
+                Text("Your connection uses legacy messages. Manage it in Settings → Advanced mode to enable sending here.").font(.footnote).foregroundStyle(.orange)
+            }
+            if model.disappearSend { Label("Sent copy will be removed after delivery",systemImage:"timer").font(.footnote).foregroundStyle(.orange) }
         }
     }
     private func homeTile(_ text:String,icon:String,work:@escaping () -> Void) -> some View {
@@ -142,79 +225,92 @@ struct CryptonView: View {
     }
     private var recipient: some View {
         VStack(alignment:.leading,spacing:18) {
-            title(model.decrypting ? "Choose sender" : "Choose recipient",model.decrypting ? "For legacy ciphertext, choose the identity that encrypted it." : "Search certified identities, or use a receiving key shared by your friend.")
-            action("Myself","person",primary:true) { model.legacySenderSelected = true; model.choose("self",name:"Myself") }
+            title(model.decrypting ? "Choose sender" : "Choose recipient",model.decrypting ? "For legacy ciphertext, choose the identity that encrypted it." : "Choose a contact, search for someone, or scan their Crypton contact code.")
+            if model.advancedMode { action("Myself","person",primary:true) { model.legacySenderSelected = true; model.choose("self",name:"Myself") } }
+            ForEach(model.contacts) { contact in action(contact.name,"person.crop.circle") { model.chooseContact(contact) } }
             if !model.decrypting { recipientSearch }
-            textField("Identity public key",$model.keyDraft,key:true)
-            Text("Paste a Crypton contact code to include both receiving and delivery keys, or enter a public key.").font(.footnote).foregroundStyle(.secondary)
+            if !model.advancedMode && !model.recipientWalletDraft.isEmpty {
+                Label("Contact code ready",systemImage:"checkmark.circle").foregroundStyle(mint)
+            } else { textField(model.advancedMode ? "Identity public key" : "Paste Crypton contact code",$model.keyDraft,key:true) }
+            if model.advancedMode { Text("Paste a Crypton contact code to include both receiving and delivery keys, or enter a public key.").font(.footnote).foregroundStyle(.secondary) }
             action("Continue",primary:true) { model.legacySenderSelected = true; model.choose(model.keyDraft,name:model.contactName.isEmpty ? "Selected identity" : model.contactName,walletIdentity:model.recipientWalletDraft.isEmpty ? nil : model.recipientWalletDraft) }
             identityImports
-            ForEach(model.contacts) { contact in action(contact.name,"person.crop.circle") { model.chooseContact(contact) } }
             back(model.decrypting ? .compose : .home)
         }
     }
     private var recipientSearch: some View {
         VStack(alignment:.leading,spacing:14) {
-            Text("FIND WITH SOCIALCERT").font(.caption).foregroundStyle(mint)
+            Text(model.advancedMode ? "FIND WITH SOCIALCERT" : "FIND SOMEONE").font(.caption).foregroundStyle(mint)
             textField("Email, social handle or name",$model.recipientQuery)
                 .accessibilityIdentifier("recipientSearchQuery")
             action("Search","magnifyingglass",primary:true) { model.searchRecipients() }
-            Text("Search uses your wallet’s trusted certificates and publicly discoverable fields. In ME, complete the request and return to Crypton.").font(.footnote).foregroundStyle(.secondary)
+            if model.advancedMode { Text("Search uses your wallet’s trusted certificates and publicly discoverable fields. In ME, complete the request and return to Crypton.").font(.footnote).foregroundStyle(.secondary) }
             ForEach(model.searchResults) { identity in
                 VStack(alignment:.leading,spacing:10) {
                     Label(identity.name,systemImage:"person.crop.circle").font(.headline)
                     Text(identity.certification).font(.subheadline).foregroundStyle(mint)
+                    if model.advancedMode {
                     Text("Wallet identity").font(.caption).foregroundStyle(.secondary)
                     ScrollView(.horizontal) { Text(identity.key).font(.system(.caption,design:.monospaced)).textSelection(.enabled).fixedSize() }
                     DisclosureGroup("Certifier public key") {
                         ScrollView(.horizontal) { Text(identity.certifier).font(.system(.caption,design:.monospaced)).textSelection(.enabled).fixedSize() }
+                    }
                     }
                     Button("Use this recipient") { model.chooseDiscovered(identity) }
                         .accessibilityIdentifier("selectRecipient-" + identity.key)
                 }.padding(16).background(panel,in:RoundedRectangle(cornerRadius:14))
             }
             if model.searchCompleted {
-                Text(model.searchResults.isEmpty ? "No matching identities returned by your wallet. Check the spelling, public certificate publication and wallet trust settings, or enter a receiving key below." : "Showing up to 20 certificates. Refine your search if needed. Confirm the identity before selecting it.")
+                Text(model.searchResults.isEmpty ? "No matches found. Check the spelling or ask for their Crypton contact code." : "Check the name and certification before choosing a recipient.")
                     .font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("recipientSearchSummary")
             }
         }
     }
     private var identityImports: some View {
         HStack {
-            Button("Scan identity",systemImage:"qrcode.viewfinder") { scanIdentity = true; modal = .scanner }
+            Button(model.advancedMode ? "Scan identity" : "Scan contact code",systemImage:"qrcode.viewfinder") { scanIdentity = true; modal = .scanner }
             Spacer()
-            Button("QR image",systemImage:"photo") { scanIdentity = true; modal = .photo }
+            Button(model.advancedMode ? "QR image" : "Choose contact QR",systemImage:"photo") { scanIdentity = true; modal = .photo }
         }.font(.subheadline).padding(.vertical,8)
     }
     private var compose: some View {
         VStack(alignment:.leading,spacing:18) {
-            title(model.decrypting ? "Open a secret." : "Write a secret.")
+            title(model.decrypting ? "Open a secret." : model.advancedMode ? "Write a secret." : "Write a message.")
             if model.decrypting && Wire.isEnvelope(model.ciphertext) { Label("Sender included in v2 envelope",systemImage:"checkmark.shield").font(.subheadline).foregroundStyle(mint) }
             else { HStack { Text((model.decrypting ? "From: " : "To: ") + model.peerName); Spacer(); Button("Change") { model.screen = .recipient } } }
             if !model.decrypting, let identity = model.selectedIdentity {
                 Text(identity.certification).font(.footnote).foregroundStyle(mint)
-                Text("This certified wallet identity will receive the encrypted message and MessageBox delivery.").font(.footnote).foregroundStyle(.secondary)
+                if model.advancedMode { Text("This certified wallet identity will receive the encrypted message and MessageBox delivery.").font(.footnote).foregroundStyle(.secondary) }
                 Button(model.recipientSaved ? "Recipient saved" : "Save recipient contact") { model.saveDiscoveredRecipient() }.disabled(model.recipientSaved)
             }
             Text(model.decrypting ? "Encrypted text" : "Your message").font(.subheadline).foregroundStyle(.secondary)
             MessageEditor(text:model.decrypting ? $model.ciphertext : $model.message).padding(12).frame(height:230).background(panel,in:RoundedRectangle(cornerRadius:12))
                 .onChange(of:model.message) { value in if value.utf16.count > 16_000 { model.message = String(value.prefix(16_000)) } }
                 .onChange(of:model.ciphertext) { value in if value.utf8.count > 100_000 { model.ciphertext = String(value.prefix(100_000)) } }
-            if model.decrypting {
+            if model.decrypting && model.advancedMode {
                 action("Scan encrypted QR","qrcode.viewfinder") { scanIdentity = false; modal = .scanner }
                 action("Import QR image","photo") { scanIdentity = false; modal = .photo }
                 Button("Import encrypted file") { filePicker = true }
             }
             if !model.decrypting && !model.legacy {
-                if model.peer != "self" {
+                if model.peer != "self", model.advancedMode {
                     textField("Recipient delivery wallet key",$model.recipientWalletDraft,key:true)
                     Text("A shared Crypton contact fills this automatically. This public key identifies the recipient’s MessageBox inbox.").font(.footnote).foregroundStyle(.secondary)
                 }
-                action("Send with MessageBox","paperplane",primary:true) { model.process(sendWithMessageBox:true) }
-                Text("Encrypts your message, checks delivery fees and opens ME once for the full payment review. Keep ME open until Crypton returns.").font(.footnote).foregroundStyle(.secondary)
+                if !model.advancedMode, model.peer != "self", model.recipientWalletDraft.isEmpty {
+                    Text("This contact is missing delivery information. Ask them to share their Crypton contact code, or use Advanced mode to enter their delivery key.").font(.footnote).foregroundStyle(.orange)
+                }
+                action(model.advancedMode ? "Send with MessageBox" : "Send message","paperplane",primary:true) { model.process(sendWithMessageBox:true) }
+                    .disabled(!model.advancedMode && model.peer != "self" && model.recipientWalletDraft.isEmpty)
+                Text("Review and approve the full payment total in ME. Crypton returns when the request finishes.").font(.footnote).foregroundStyle(.secondary)
+                if model.disappearSend { Label("Sent copy will be removed after delivery",systemImage:"timer").font(.footnote).foregroundStyle(.orange) }
             }
+            if model.advancedMode || model.decrypting {
             action(model.decrypting ? "Decrypt message" : "Encrypt message",model.decrypting ? "lock.open" : "lock",primary:model.decrypting || model.legacy) { model.process() }
             Text(model.decrypting ? "Nested messages open one layer at a time." : model.legacy ? "Legacy format · protocol [1, crypton]" : "Crypton v2 · each seal uses a fresh sender key. Keep your plaintext copy if you need it later.").font(.footnote).foregroundStyle(.secondary)
+            } else if model.legacy {
+                Text("Your wallet is configured for legacy messages. Open Settings and enable Advanced mode to manage this connection.").foregroundStyle(.orange)
+            }
             back()
         }
     }
@@ -222,7 +318,7 @@ struct CryptonView: View {
         let identity = ["identity","walletIdentity"].contains(model.outputKind)
         let encrypted = ["encrypted","layer"].contains(model.outputKind)
         return VStack(alignment:.leading,spacing:18) {
-            title(identity ? (model.outputKind == "walletIdentity" ? "Delivery wallet key" : "My identity") : model.outputKind == "layer" ? "Outer layer opened" : encrypted ? "Sealed and ready." : "Message opened.")
+            title(identity ? (model.outputKind == "walletIdentity" ? "Delivery wallet key" : model.advancedMode ? "My identity" : "My contact") : model.outputKind == "layer" ? "Outer layer opened" : encrypted ? "Sealed and ready." : "Message opened.")
             if model.outputKind == "layer" {
                 Text("The inner message is still encrypted.").foregroundStyle(mint)
                 if !model.layerNote.isEmpty { Text(model.layerNote).textSelection(.enabled) }
@@ -234,22 +330,24 @@ struct CryptonView: View {
                     action("Share QR image","square.and.arrow.up") { modal = .share(SharedItems(items:[image])) }
                 } else { Text("This message is too large for one QR code. Share the encrypted text instead.").foregroundStyle(.secondary) }
             }
-            if model.disappearSend && encrypted { Text(model.output).font(.system(.footnote,design:.monospaced)).accessibilityIdentifier("resultText") }
-            else { selectable(model.output).accessibilityIdentifier("resultText") }
+            if !identity || model.advancedMode {
+                if model.disappearSend && encrypted { Text(model.output).font(.system(.footnote,design:.monospaced)).accessibilityIdentifier("resultText") }
+                else { selectable(model.output).accessibilityIdentifier("resultText") }
+            }
             if model.outputKind == "identity" {
-                Text(model.legacy ? "Legacy mode shares your wallet identity. Use the same format as your sender." : "Share this contact QR or text. It contains both public keys needed to encrypt and deliver a message to you.").font(.footnote).foregroundStyle(.secondary)
-                if let walletKey = model.sharedIdentity?.walletIdentity {
+                Text(model.advancedMode ? (model.legacy ? "Legacy mode shares your wallet identity. Use the same format as your sender." : "Share this contact QR or text. It contains both public keys needed to encrypt and deliver a message to you.") : "Share this code so someone can send you an encrypted message.").font(.footnote).foregroundStyle(.secondary)
+                if model.advancedMode, let walletKey = model.sharedIdentity?.walletIdentity {
                     DisclosureGroup("Delivery wallet key") { selectable(walletKey) }
                     Button("Copy receiving key only") { model.copyText(model.output) }
                 }
             }
             if model.outputKind == "walletIdentity" { Text("For MessageBox delivery, share this wallet identity separately from your Crypton receiving key.").font(.footnote).foregroundStyle(.secondary) }
             if identity || !model.disappearSend {
-            action(copied ? "Copied" : "Copy text","doc.on.doc") {
+            action(copied ? "Copied" : identity && !model.advancedMode ? "Copy contact code" : "Copy text","doc.on.doc") {
                 model.copyText(model.outputKind == "identity" ? model.identityShareText : model.output)
                 copied = true; DispatchQueue.main.asyncAfter(deadline:.now()+2) { copied = false }
             }
-            action("Share text","square.and.arrow.up") { modal = .share(SharedItems(items:[model.outputKind == "identity" ? model.identityShareText : model.output])) }
+            action(identity && !model.advancedMode ? "Share contact" : "Share text","square.and.arrow.up") { modal = .share(SharedItems(items:[model.outputKind == "identity" ? model.identityShareText : model.output])) }
             }
             if model.outputKind == "encrypted" && Wire.isEnvelope(model.output) { action("Send with MessageBox","paperplane",primary:true) { model.newDelivery() } }
             action("Done","checkmark",primary:true) { model.done() }
@@ -257,29 +355,51 @@ struct CryptonView: View {
     }
     private var contacts: some View {
         VStack(alignment:.leading,spacing:18) {
-            title("Your contacts.","Only names and public identity keys are saved.")
+            title("Your contacts.",model.advancedMode ? "Only names and public identity keys are saved." : "Save the people you message.")
+            if !model.advancedMode { action("Share my contact","person.crop.square") { model.identity() } }
             ForEach(model.contacts) { contact in
                 VStack(alignment:.leading,spacing:10) {
                     Button(contact.name) { model.chooseContact(contact) }
-                    Text(contact.key).font(.system(.caption,design:.monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
-                    if contact.walletIdentity != nil { Label("Encryption and delivery keys saved",systemImage:"checkmark.circle").font(.caption).foregroundStyle(mint) }
-                    HStack { Button("Export contact") { export(contact) }; Spacer(); Button("Delete",role:.destructive) { model.deleteContact(contact) } }.font(.caption)
+                    if model.advancedMode {
+                        Text(contact.key).font(.system(.caption,design:.monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
+                        if contact.walletIdentity != nil { Label("Encryption and delivery keys saved",systemImage:"checkmark.circle").font(.caption).foregroundStyle(mint) }
+                    }
+                    HStack { Button(model.advancedMode ? "Export contact" : "Share contact") { export(contact) }; Spacer(); Button("Delete",role:.destructive) { model.deleteContact(contact) } }.font(.caption)
                 }.padding(16).background(panel,in:RoundedRectangle(cornerRadius:12))
             }
-            if model.contacts.isEmpty { Text("No contacts yet. Add a friend’s receiving key below.").foregroundStyle(.secondary) }
+            if model.contacts.isEmpty { Text("No contacts yet. Add a friend’s Crypton contact code below.").foregroundStyle(.secondary) }
             textField("Contact name",$model.contactName)
-            textField("Identity public key",$model.keyDraft,key:true)
-            textField("Delivery wallet key (optional)",$model.contactWalletDraft,key:true)
+            if !model.advancedMode && !model.contactWalletDraft.isEmpty {
+                Label("Contact code ready to save",systemImage:"checkmark.circle").foregroundStyle(mint)
+            } else { textField(model.advancedMode ? "Identity public key" : "Paste Crypton contact code",$model.keyDraft,key:true) }
+            if model.advancedMode { textField("Delivery wallet key (optional)",$model.contactWalletDraft,key:true) }
             identityImports
             action("Save contact","person.badge.plus",primary:true) { model.saveContact() }
-            action("Import phone contact","person.crop.rectangle") { modal = .contacts }
-            Text("Phone contacts can carry a Crypton identity in a URL or instant-message field.").font(.footnote).foregroundStyle(.secondary)
+            if model.advancedMode {
+                action("Import phone contact","person.crop.rectangle") { modal = .contacts }
+                Text("Phone contacts can carry a Crypton identity in a URL or instant-message field.").font(.footnote).foregroundStyle(.secondary)
+            }
             back()
         }
     }
     private var settings: some View {
         VStack(alignment:.leading,spacing:18) {
             title("Settings.")
+            Toggle("Advanced mode",isOn:$model.advancedMode).tint(mint).accessibilityIdentifier("advancedMode")
+            if !model.advancedMode {
+                Text("Wallet: " + (model.walletMode == "me" ? "Metanet Explorer" : model.walletMode == "me-bob" ? "ME (Bob)" : "Custom connection")).font(.headline)
+                action("Connect wallet","wallet.pass",primary:true) { model.connect(showPortal:true) }
+                Text("Your wallet reviews permissions and the full payment total before sending.").font(.footnote).foregroundStyle(.secondary)
+                if let me = model.wallet as? MEWallet {
+                    Text("Pairing code: " + me.pairingCode).font(.footnote.monospaced()).textSelection(.enabled)
+                    Text("Match this code when ME asks to connect Crypton.").font(.footnote).foregroundStyle(.secondary)
+                }
+                if model.disappearSend || model.disappearReceive {
+                    Label("Disappearing messages are enabled. Manage them in Advanced mode.",systemImage:"timer").font(.footnote).foregroundStyle(.orange)
+                }
+                action("Share my contact","person.crop.square") { model.identity() }
+                action("How to use Crypton","questionmark.circle") { model.screen = .guide }
+            } else {
             Text("WALLET CONNECTION").font(.caption).foregroundStyle(mint)
             Picker("Wallet connection",selection:$model.walletMode) { Text("Metanet Explorer").tag("me"); Text("ME (Bob)").tag("me-bob"); Text("Original portal").tag("portal"); Text("BRC-100 JSON").tag("json") }.pickerStyle(.menu).accessibilityIdentifier("walletConnection")
             if model.walletMode == "json" {
@@ -308,17 +428,26 @@ struct CryptonView: View {
             action("How Crypton works","questionmark.circle") { model.screen = .guide }
             Button("Clear wallet session",role:.destructive) { clearConfirm = true }.padding(.vertical,12)
             Text("Drafts and decrypted messages stay in memory. The app pairing key stays in the iOS Keychain across sessions. Clearing this session does not sign out your external wallet.").font(.footnote).foregroundStyle(.secondary)
+            }
             Text("Music: Phantom from Space — Kevin MacLeod (incompetech.com), CC BY 4.0.").font(.caption).foregroundStyle(.secondary)
             back()
         }
     }
     private var guide: some View {
         VStack(alignment:.leading,spacing:22) {
+            if !model.advancedMode {
+                title("Private messages, simply.")
+                guideRow("01","Connect your wallet","Use Metanet Explorer on this device. Review Crypton’s connection permissions in ME.")
+                guideRow("02","Choose a person","Search for someone or add their shared Crypton contact code. Share your own code from Contacts.")
+                guideRow("03","Write and send","Write a message, tap Send and approve the full payment total in ME. Check Sent messages for delivery status.")
+                guideRow("04","Read your messages","Open Inbox, refresh, choose a message and decrypt it. Copies are kept unless you enable disappearing messages in Advanced mode.")
+            } else {
             title("Your words.\nTheir eyes only.","Encrypted messages across Crypton for iOS, Android and the web.")
             guideRow("01","Connect a wallet","Use Metanet Explorer on this iPhone for Crypton v2. Settings also offers the original portal and BRC-100 JSON wallets.")
             guideRow("02","Find a recipient","Search certified identities through your wallet, or share My identity and save a friend’s receiving key. Both people must use compatible message formats.")
             guideRow("03","Seal and share","Choose a recipient, write your message and share the encrypted text or QR image.")
             guideRow("04","Open a secret","Refresh MessageBox inbox, select a message and decrypt it. Text, QR and Files import are also available. Legacy ciphertext needs its sender selected.")
+            }
             action("Get started","arrow.right",primary:true) { model.finishGuide() }
         }
     }
@@ -327,13 +456,13 @@ struct CryptonView: View {
     }
     private var outbox: some View {
         VStack(alignment:.leading,spacing:18) {
-            title("MessageBox outbox", "Encrypted delivery records survive restarts. Recovery uses the saved payment; it cannot start a second one.")
-            action("My delivery wallet key","wallet.pass") { model.identity(root:true) }
+            title(model.advancedMode ? "MessageBox outbox" : "Sent messages", "Check delivery status or continue an interrupted send.")
+            if model.advancedMode { action("My delivery wallet key","wallet.pass") { model.identity(root:true) } }
             if let records = try? model.store.list() {
-                if records.isEmpty { Text("No deliveries yet. Encrypt a v2 message and choose Send with MessageBox.").foregroundStyle(.secondary) }
+                if records.isEmpty { Text("No sent messages yet.").foregroundStyle(.secondary) }
                 ForEach(records.indices,id:\.self) { i in
                     let r = records[i]
-                    action((r["name"] as? String ?? "Recipient") + " · " + (r["state"] as? String ?? "Unknown"),"envelope") { model.showDelivery(r["id"] as? String ?? "") }
+                    action((r["name"] as? String ?? "Recipient") + " · " + (model.advancedMode ? r["state"] as? String ?? "Unknown" : deliveryState(r["state"] as? String ?? "Unknown")),"envelope") { model.showDelivery(r["id"] as? String ?? "") }
                 }
             } else { Text("Some saved records could not be read. They have been retained; do not create another payment for an uncertain delivery.").foregroundStyle(.orange) }
             back()
@@ -345,13 +474,17 @@ struct CryptonView: View {
                 title("Sent · cleanup pending","The message was accepted. Only a cleanup marker remains; no new payment is allowed.")
                 action("Retry local cleanup",primary:true) { model.deliver("cleanup") }; back(.outbox)
             } else {
-            title("MessageBox delivery",state.replacingOccurrences(of:"_",with:" "))
+            title(model.advancedMode ? "MessageBox delivery" : "Message delivery",deliveryState(state))
             Text("To: " + (r["name"] as? String ?? "Recipient"))
+            if model.advancedMode {
             Text(model.store.serviceHost + "\nInbox: notifications").font(.footnote).foregroundStyle(.secondary)
             if let key = r["encryptionKey"] as? String, key != "self" { Text("Crypton receiving key").font(.caption); selectable(key) }
+            }
             if ["DRAFT","QUOTED"].contains(state) {
+                if model.advancedMode {
                 Text("MessageBox delivers to a wallet identity. It can differ from the Crypton receiving key used to encrypt this message.").font(.footnote).foregroundStyle(.secondary)
                 textField("Recipient wallet identity (blank for self)",$model.deliveryRecipient,key:true)
+                }
                 if let p = r["prepared"] as? JSON, let q = p["quote"] as? JSON, let fee = try? model.store.feeTotal(q) {
                     Text("Server: \(integer(q["deliveryFee"]) ?? 0) sats\nRecipient: \(integer(q["recipientFee"]) ?? 0) sats\nMessageBox fees: \(fee) sats").font(.headline)
                     Text("Your wallet may add storage and network fees. Review the full total in its transaction prompt before approving.").font(.footnote).foregroundStyle(.secondary)
@@ -361,7 +494,7 @@ struct CryptonView: View {
             } else if state == "SENT" {
                 Label("Accepted by MessageBox",systemImage:"checkmark.circle").foregroundStyle(mint)
                 Text("Acceptance confirms server delivery, not that the recipient has opened your message.").font(.footnote).foregroundStyle(.secondary)
-                if let receipt = r["receipt"] as? JSON { selectable(receipt["messageId"] as? String ?? "").accessibilityIdentifier("deliveryMessageID") }
+                if model.advancedMode, let receipt = r["receipt"] as? JSON { selectable(receipt["messageId"] as? String ?? "").accessibilityIdentifier("deliveryMessageID") }
             } else if state == "PAYMENT_REQUESTED" {
                 Text("The payment outcome is uncertain. Check the wallet history. A second payment is blocked.").foregroundStyle(.orange)
                 action("Check wallet history","clock") { model.deliver("recover") }
@@ -382,24 +515,25 @@ struct CryptonView: View {
                     }
                 }
             } else { action("Retry delivery with saved payment","arrow.clockwise",primary:true) { model.deliver("resume") } }
-            if let payment = r["payment"] as? JSON { Text("Payment transaction").font(.caption); selectable(payment["txid"] as? String ?? "") }
+            if model.advancedMode, let payment = r["payment"] as? JSON { Text("Payment transaction").font(.caption); selectable(payment["txid"] as? String ?? "") }
             if let error = r["error"] as? String { Text(error).foregroundStyle(.orange) }
-            if r["disappear"] as? Bool != true { action("Share encrypted payload","square.and.arrow.up") { modal = .share(SharedItems(items:[r["envelope"] as? String ?? ""])) } }
+            if model.advancedMode, r["disappear"] as? Bool != true { action("Share encrypted payload","square.and.arrow.up") { modal = .share(SharedItems(items:[r["envelope"] as? String ?? ""])) } }
             back(.outbox)
             }
         } else { title("Delivery unavailable","The saved record has been retained."); back(.outbox) }
     }
     private var inbox:some View {
         VStack(alignment:.leading,spacing:18) {
-            title("MessageBox inbox","Refresh to retrieve encrypted messages through your selected wallet. No payments are accepted automatically.")
+            title(model.advancedMode ? "MessageBox inbox" : "Inbox",model.advancedMode ? "Refresh to retrieve encrypted messages through your selected wallet. No payments are accepted automatically." : "Refresh to check for new encrypted messages.")
             action("Refresh inbox","arrow.clockwise",primary:true) { model.receive("refresh") }
-            if !model.inboxWallet.isEmpty { Text("Saved wallet: " + model.inboxWallet.prefix(14) + "… · refresh to use ME’s current profile").font(.footnote).foregroundStyle(.secondary) }
+            if model.advancedMode, !model.inboxWallet.isEmpty { Text("Saved wallet: " + model.inboxWallet.prefix(14) + "… · refresh to use ME’s current profile").font(.footnote).foregroundStyle(.secondary) }
             if !model.inboxNotice.isEmpty { Text(model.inboxNotice).accessibilityIdentifier("inboxNotice") }
-            Toggle("Show dismissed messages",isOn:$model.showDismissed).tint(mint)
+            if model.advancedMode { Toggle("Show dismissed messages",isOn:$model.showDismissed).tint(mint) }
+            if model.disappearReceive { Label("Messages are removed after decryption",systemImage:"timer").font(.footnote).foregroundStyle(.orange) }
             ForEach(model.inboxRows.indices,id:\.self) { index in
                 let r = model.inboxRows[index], id = r["messageId"] as? String ?? ""
                 let state = InboxStore.pending(r) ? "Server removal pending" : r["dismissed"] as? Bool == true ? "Dismissed" : r["read"] as? Bool == true ? "Read" : "Unread"
-                action(state + " · " + id.prefix(8),"envelope") { model.showInboxMessage(id) }.accessibilityIdentifier("inbox-"+id)
+                action(model.advancedMode ? state + " · " + id.prefix(8) : inboxLabel(r,state:state),"envelope") { model.showInboxMessage(id) }.accessibilityIdentifier("inbox-"+id)
             }
             if model.inboxRows.isEmpty { Text("No saved Crypton messages in this view.").foregroundStyle(.secondary) }
             if model.inboxMore { action("Load more messages","arrow.down") { model.receive("refresh",more:true) } }
@@ -431,13 +565,30 @@ struct CryptonView: View {
                 action("Retry server removal",primary:true) { model.receive("remove") }
             } else {
                 if model.inboxContent == nil { action(model.disappearReceive ? "Decrypt once and remove" : "Decrypt message","lock.open",primary:true) { model.receive("open") } }
-                DisclosureGroup("Delivery details") {
+                if model.advancedMode { DisclosureGroup("Delivery details") {
                     selectable(r["sender"] as? String ?? ""); selectable(model.inboxID)
-                }
-                action(r["dismissed"] as? Bool == true ? "Restore message" : "Dismiss on this device","archivebox") { model.flagInbox(r["dismissed"] as? Bool != true) }
+                } }
+                if model.advancedMode { action(r["dismissed"] as? Bool == true ? "Restore message" : "Dismiss on this device","archivebox") { model.flagInbox(r["dismissed"] as? Bool != true) } }
             }
         }
         if !model.privateInboxView { action("Back to inbox") { model.closeInboxMessage() } }
+    }
+    private func deliveryState(_ state:String) -> String {
+        if model.advancedMode { return state.replacingOccurrences(of:"_",with:" ") }
+        switch state {
+        case "DRAFT": return "Not sent"
+        case "QUOTED": return "Ready for payment review"
+        case "PAYMENT_REQUESTED": return "Check payment status"
+        case "PAID", "SUBMITTING": return "Delivery pending"
+        case "SENT": return "Sent"
+        default: return "Needs attention"
+        }
+    }
+    private func inboxLabel(_ record:JSON,state:String) -> String {
+        let sender = record["sender"] as? String ?? ""
+        let name = model.contacts.first(where:{ $0.walletIdentity == sender || $0.key == sender })?.name ?? "Message"
+        let date = Date(timeIntervalSince1970:record["receivedAt"] as? Double ?? 0)
+        return name + " · " + state + " · " + date.formatted(date:.abbreviated,time:.shortened)
     }
     private func received(_ value:Result<String,Error>) {
         modal = nil
