@@ -383,7 +383,7 @@ class Run:
         self.save()
 
     def send_and_verify(self, template):
-        if not self.args.fixture and getattr(self.args,'launch_kind',None)=='cold':
+        if not self.args.fixture and getattr(self.args,'launch_kind',None) in ['cold','warm']:
             self.phase(template,'preflight',self.profiles[0])
         self.phase(template, 'preflight', self.profiles[1])
         try:

@@ -20,6 +20,14 @@ class Contract(unittest.TestCase):
         self.focus=patch.object(send.Run,'focus_window').start()
         self.video=patch.object(send.Run,'start_video',return_value=None).start()
         self.addCleanup(patch.stopall)
+    def test_both_launch_modes_check_both_wallets_before_sending(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            for kind in ['cold','warm']:
+                run=send.Run(types.SimpleNamespace(text='Readiness',fixture=False,timeout=30,launch_kind=kind),[{'device':'sender'},{'device':'peer'}])
+                calls=[]
+                with patch.object(run,'phase',side_effect=lambda template,role,profile:calls.append((role,profile['device']))):run.send_and_verify(None)
+                self.assertEqual(calls,[('preflight','sender'),('preflight','peer'),('send','sender'),('receive','peer'),('reopen','peer')])
     def test_warm_launch_uses_existing_runtime_and_queues_only_after_clock_start(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
