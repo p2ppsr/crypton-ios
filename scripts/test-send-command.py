@@ -15,6 +15,20 @@ spec = importlib.util.spec_from_file_location('send_command', Path(__file__).wit
 send = importlib.util.module_from_spec(spec); spec.loader.exec_module(send)
 
 class Contract(unittest.TestCase):
+    def test_initial_capture_keeps_both_diagnostic_streams_but_only_sender_video(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            for verify in [False,True]:
+                run=send.Run(types.SimpleNamespace(text='Recorded',fixture=False,timeout=30),[{'device':'sender'},{'device':'peer'}])
+                if verify:run.args.verify_run=Path('original')
+                with patch.object(run,'start_video') as video,patch.object(send.subprocess,'Popen') as process,patch.object(send.time,'sleep'):
+                    process.return_value.poll.return_value=None
+                    run.start_capture()
+                    devices=[call.args[0][3] for call in process.call_args_list]
+                    self.assertEqual(devices,['peer'] if verify else ['sender','peer'])
+                    if verify:video.assert_not_called()
+                    else:video.assert_called_once_with(run.profiles[0],'send')
+                for _,output in run.logs:output.close()
     def test_cpu_gate_requires_three_quiet_intervals_and_ignores_boot_average(self):
         def output(samples):
             return '\n'.join(f'Load Avg: {load}, 20.0, 30.0\nCPU usage: 20% user, 10% sys, {idle}% idle' for load,idle in samples)
@@ -263,28 +277,69 @@ class Contract(unittest.TestCase):
             with patch.object(run,'phase',side_effect=phase):
                 with self.assertRaisesRegex(RuntimeError,'No submission evidence'):run.send_and_verify(None)
             self.assertEqual(phases,['preflight','send'])
-    def test_recipient_reads_overlap_only_after_payment_and_completion_waits_for_sender(self):
-        import threading
+    def test_receiver_waits_for_saved_sender_acceptance_not_payment(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
-            run=send.Run(types.SimpleNamespace(text='Parallel paid test',fixture=False,timeout=30),[{'device':'sender'},{'device':'peer'}])
-            seen=threading.Event();phases=[]
+            run=send.Run(types.SimpleNamespace(text='Retained test',fixture=False,timeout=30),[{'device':'sender'},{'device':'peer'}])
+            phases=[]
             def event(stage,role,**fields):run.event({'run_id':run.plan['run_id'],'utc':'now','stage':stage,'role':role,**fields})
             def phase(template,role,profile):
                 phases.append(role)
                 if role=='send':
                     run.state['status']='sending'
-                    self.assertFalse(seen.is_set())
                     event('payment_saved','send',has_saved_payment=True,message_id='d'*64,delivery_id='43054422-2771-4052-a058-af93cc9c0314')
-                    self.assertTrue(seen.wait(2),'Recipient must start while submission is still pending')
-                    self.assertEqual(run.state['status'],'sending','Recipient cannot manufacture a sender receipt')
+                    self.assertEqual(phases,['preflight','send'],'Payment cannot start the receiver')
+                    with self.assertRaisesRegex(RuntimeError,'requires saved sender acceptance'):run.receiver_video_purpose()
                     event('accepted','send',message_id='d'*64)
                 elif role=='receive':
-                    self.assertEqual(run.state['message_id'],'d'*64)
-                    event('retained','receive',message_id='d'*64);seen.set()
+                    self.assertEqual(run.receiver_video_purpose(),'receive')
+                    event('retained','receive',message_id='d'*64)
             with patch.object(run,'phase',side_effect=phase):run.send_and_verify(None)
             self.assertEqual(phases,['preflight','send','receive'])
             self.assertEqual(run.state['status'],'complete');self.assertEqual(run.state['sender_receipt'],'confirmed')
+    def test_unaccepted_receiver_cannot_start_video_or_launch(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Unconfirmed',fixture=False,timeout=30),[{'device':'sender'},{'device':'peer'}])
+            with patch.object(run,'start_video') as video,patch.object(send,'sim') as launch,patch.object(send.subprocess,'check_output') as read:
+                with self.assertRaisesRegex(RuntimeError,'requires saved sender acceptance'):run.phase(None,'receive',run.profiles[1])
+                video.assert_not_called();launch.assert_not_called();read.assert_not_called()
+            run.state.update(sender_receipt='confirmed',sender_status='accepted',message_id='a'*64)
+            with self.assertRaises(RuntimeError):run.receiver_video_purpose()
+    def test_missing_receipt_and_readonly_verification_have_distinct_video_labels(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Paid',fixture=False,timeout=30),[{'device':'sender'},{'device':'peer'}])
+            run.state.update(sender_receipt='unconfirmed',sender_error='Lost response',message_id='a'*64)
+            self.assertEqual(run.receiver_video_purpose(),'receipt-recovery')
+            run.args.verify_run=Path('original')
+            self.assertEqual(run.receiver_video_purpose(),'verification-only')
+    def test_receiver_setup_clip_finishes_before_send_then_receive_video_precedes_launch(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Recorded',fixture=False,timeout=30),[{'device':'sender'},{'device':'peer'}])
+            trace=[]
+            def video(profile,purpose):trace.append(purpose+'_video');return purpose
+            def launch(*args,**kwargs):
+                role='receive' if 'receive_video' in trace else 'preflight'
+                trace.append(role+'_launch')
+                root=Path(folder)/'container/Library/Application Support/ScriptedRuns'/run.plan['run_id']
+                stages=['retained','phase_complete'] if role=='receive' else ['preflight_complete','phase_complete']
+                (root/'events.jsonl').write_text(''.join(json.dumps({'run_id':run.plan['run_id'],'role':role,'stage':stage,'utc':'now','elapsed_ms':0})+'\n' for stage in stages))
+            with patch.object(run,'start_video',side_effect=video),patch.object(run,'stop_video',side_effect=lambda handle:trace.append(handle+'_stopped') or True),patch.object(send.subprocess,'check_output',return_value=str(Path(folder)/'container')+'\n'),patch.object(send,'sim',side_effect=launch):
+                run.phase(None,'preflight',run.profiles[1])
+                self.assertEqual(trace,['receiver-setup_video','preflight_launch','receiver-setup_stopped'])
+                run.event({'run_id':run.plan['run_id'],'role':'send','stage':'accepted','message_id':'a'*64,'utc':'now'})
+                run.phase(None,'receive',run.profiles[1])
+            self.assertEqual(trace[-2:],['receive_video','receive_launch'])
+    def test_recorder_failure_prevents_receiver_launch(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Paid',fixture=False,timeout=30),[{'device':'sender'},{'device':'peer'}])
+            run.event({'run_id':run.plan['run_id'],'role':'send','stage':'accepted','message_id':'a'*64,'utc':'now'})
+            with patch.object(run,'start_video',side_effect=RuntimeError('Recording did not start')),patch.object(send,'sim') as launch,patch.object(send.subprocess,'check_output') as read:
+                with self.assertRaisesRegex(RuntimeError,'Recording did not start'):run.phase(None,'receive',run.profiles[1])
+                launch.assert_not_called();read.assert_not_called()
     def test_single_device_fixture_never_launches_receiver_over_its_sender(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
@@ -295,7 +350,7 @@ class Contract(unittest.TestCase):
                 if role=='send':
                     run.state['status']='sending'
                     run.event({'run_id':run.plan['run_id'],'utc':'now','role':'send','stage':'payment_saved','has_saved_payment':True,'message_id':'e'*64,'delivery_id':'43054422-2771-4052-a058-af93cc9c0314'})
-                    self.assertIsNone(run.receive_future)
+                    with self.assertRaises(RuntimeError):run.receiver_video_purpose()
                     run.event({'run_id':run.plan['run_id'],'utc':'now','role':'send','stage':'accepted','message_id':'e'*64})
                 elif role=='receive':run.state['status']='complete'
             with patch.object(run,'phase',side_effect=phase):run.send_and_verify(None)
@@ -324,8 +379,8 @@ class Contract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             run=send.Run.__new__(send.Run);run.folder=Path(folder);run.plan={'run_id':'11111111-1111-1111-1111-111111111111'}
             run.profiles=[{'device':'sender'},{'device':'receiver'}];run.args=types.SimpleNamespace(timeout=30,fixture=False)
-            run.state={};run.events=[];run.state_lock=threading.RLock()
-            with patch.object(send.subprocess,'check_output',return_value=str(Path(folder)/'container')+'\n'),patch.object(send,'sim',side_effect=RuntimeError('Launch failed')):
+            run.state={'sender_receipt':'unconfirmed','sender_error':'Lost response','message_id':'a'*64};run.events=[];run.state_lock=threading.RLock()
+            with patch.object(run,'start_video'),patch.object(send.subprocess,'check_output',return_value=str(Path(folder)/'container')+'\n'),patch.object(send,'sim',side_effect=RuntimeError('Launch failed')):
                 with self.assertRaisesRegex(RuntimeError,'Launch failed'):run.phase(None,'receive',run.profiles[1])
             self.assertFalse((Path(folder)/'container/Library/Application Support/ScriptedRuns'/run.plan['run_id']/'request.json').exists())
     def test_another_run_cannot_inject_acceptance(self):

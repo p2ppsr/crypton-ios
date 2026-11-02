@@ -15,7 +15,7 @@ import time
 
 
 def utc():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 def main():

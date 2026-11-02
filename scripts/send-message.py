@@ -15,7 +15,6 @@ import plistlib
 import re
 import queue
 import threading
-from concurrent.futures import ThreadPoolExecutor
 import signal
 import subprocess
 import sys
@@ -193,11 +192,10 @@ class Run:
         self.review_prompted = False
         self.wallet_roots = {}
         self.live_wallet_events = {}
-        self.receive_pool = None
-        self.receive_future = None
         self.stop_phases = threading.Event()
         self.state = {'status': 'preparing', 'started_at': now, 'run_id': self.plan['run_id'], 'fixture': args.fixture,
                       'sender': profiles[0]['device'], 'receiver': profiles[1]['device'],
+                      'crypton_launch_mode':'cold_process_restart', 'me_launch_mode':'existing_process_not_restarted',
                       'text_sha256': hashlib.sha256(self.plan['message'].encode()).hexdigest(), 'folder': str(self.folder)}
         if original:
             self.state.update(status='verifying',mode='verify_only',original_run=str(original.resolve()),message_id=args.message_id,
@@ -266,15 +264,6 @@ class Run:
     def start_capture(self):
         active = self.profiles[1:] if getattr(self.args,'verify_run',None) else self.profiles
         for device in dict.fromkeys(p['device'] for p in active):
-            ready = self.folder / (device + '.ready.json')
-            log = (self.folder / (device + '.recorder.log')).open('w')
-            process = subprocess.Popen([sys.executable, str(REPO / 'scripts/record-ios-run.py'), '--device', device,
-                '--label', 'send-' + self.plan['run_id'][:8], '--output-dir', str(self.folder), '--ready-file', str(ready)], stdout=log, stderr=subprocess.STDOUT)
-            self.recorders.append((process, log, ready))
-            deadline = time.monotonic() + 25
-            while not ready.exists():
-                if process.poll() is not None or time.monotonic() > deadline: raise RuntimeError('Recording did not start; no UI run will begin')
-                time.sleep(.1)
             path = self.folder / (device + '.pipeline.jsonl')
             output = path.open('w')
             process = subprocess.Popen(['xcrun', 'simctl', 'spawn', device, 'log', 'stream', '--style', 'ndjson', '--level', 'info',
@@ -282,6 +271,50 @@ class Run:
             self.logs.append((process, output))
             time.sleep(.1)
             if process.poll() is not None: raise RuntimeError('Native timing capture failed before the UI run')
+        if not getattr(self.args,'verify_run',None):
+            self.start_video(self.profiles[0],'send' if not getattr(self.args,'recovery_only',False) else 'review-recovery')
+
+    def start_video(self, profile, purpose):
+        device = profile['device']
+        # A disposable self-send already has one continuous sender recording.
+        if any(ready.name.startswith(device+'.') for _,_,ready in self.recorders): return None
+        ready = self.folder / (device + '.' + purpose + '.ready.json')
+        log = (self.folder / (device + '.' + purpose + '.recorder.log')).open('w')
+        process = subprocess.Popen([sys.executable,str(REPO/'scripts/record-ios-run.py'),'--device',device,
+            '--label',purpose+'-'+self.plan['run_id'][:8],'--output-dir',str(self.folder),'--ready-file',str(ready)],stdout=log,stderr=subprocess.STDOUT)
+        handle = (process,log,ready);self.recorders.append(handle)
+        deadline = time.monotonic()+25
+        while not ready.exists():
+            if process.poll() is not None or time.monotonic()>deadline:raise RuntimeError('Recording did not start; no UI run will begin')
+            time.sleep(.1)
+        with (self.folder/'recording-events.jsonl').open('a') as output:
+            output.write(json.dumps({'utc':utc(),'device':device,'purpose':purpose,'stage':'ready','run_id':self.plan['run_id']})+'\n')
+        return handle
+
+    def stop_video(self, handle):
+        process, output, ready = handle
+        if process.poll() is None:process.send_signal(signal.SIGINT)
+        try:code=process.wait(timeout=45)
+        except subprocess.TimeoutExpired:process.terminate();code=1
+        output.close();self.recorders.remove(handle)
+        valid = False
+        if not code and ready.exists():
+            try:
+                metadata=json.loads(ready.read_text())
+                valid=json.loads((Path(metadata['runDirectory'])/'run.json').read_text())['status']=='complete'
+            except (OSError,ValueError,KeyError):pass
+        if not valid:self.state['recording_error']=True
+        return valid
+
+    def receiver_video_purpose(self):
+        if getattr(self.args,'verify_run',None):return 'verification-only'
+        if (self.state.get('sender_receipt')=='confirmed' and self.state.get('sender_status')=='accepted'
+                and any(e.get('role')=='send' and e.get('stage')=='accepted'
+                        and e.get('message_id')==self.state.get('message_id') for e in self.events)):
+            return 'receive'
+        if self.state.get('sender_receipt')=='unconfirmed' and self.state.get('sender_error') and self.state.get('message_id'):
+            return 'receipt-recovery'
+        raise RuntimeError('Receiver recording/launch requires saved sender acceptance or explicit receipt recovery')
 
     def event(self, e):
         if e.get('run_id') != self.plan['run_id']: raise RuntimeError('Unexpected run identity in UI events')
@@ -312,9 +345,6 @@ class Run:
                 and re.fullmatch(r'[a-f0-9]{64}', str(e.get('message_id','')))
                 and re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', str(e.get('delivery_id','')))):
             self.state.update(message_id=e['message_id'],delivery_id=e['delivery_id'])
-            if (getattr(self,'receive_pool',None) is not None and self.receive_future is None
-                    and self.profiles[0]['device'] != self.profiles[1]['device']):
-                self.receive_future=self.receive_pool.submit(self.phase,None,'receive',self.profiles[1])
         if stage == 'send_tapped':
             self.state['status'] = 'sending'
         if stage == 'pay_visible' or (stage == 'progress' and 'approve payment' in e.get('detail','').lower()):
@@ -335,28 +365,18 @@ class Run:
 
     def send_and_verify(self, template):
         self.phase(template, 'preflight', self.profiles[1])
-        self.receive_pool=ThreadPoolExecutor(max_workers=1)
         try:
-            try:
-                self.phase(template, 'send', self.profiles[0])
-            except Exception as error:
-                # Only reads overlap the already-durable payment/submission.
-                if not self.state.pop('verify_unconfirmed_submission', False): raise
-                with self.state_lock:
-                    self.state.update(status='needs_recovery',sender_error=str(error),sender_receipt='unconfirmed')
-                    self.save()
-                print('Sender receipt missing; checking the exact paid message on the recipient. No resend/payment.\n'
-                      'Composed: '+self.plan['composed_at']+'; run: '+self.plan['run_id'],flush=True)
-            if self.receive_future is not None:
-                self.receive_future.result(timeout=self.args.timeout+35)
-            else:
-                self.phase(template,'receive',self.profiles[1])
-            if self.state.get('sender_receipt') == 'unconfirmed':
-                self.state['status']='recipient_verified';self.save()
-        finally:
-            self.stop_phases.set()
-            self.receive_pool.shutdown(wait=True,cancel_futures=True)
-            self.receive_pool=None
+            self.phase(template, 'send', self.profiles[0])
+        except Exception as error:
+            if not self.state.pop('verify_unconfirmed_submission', False): raise
+            with self.state_lock:
+                self.state.update(status='needs_recovery',sender_error=str(error),sender_receipt='unconfirmed')
+                self.save()
+            print('Sender receipt missing; checking the exact paid message on the recipient. No resend/payment.\n'
+                  'Composed: '+self.plan['composed_at']+'; run: '+self.plan['run_id'],flush=True)
+        self.phase(template,'receive',self.profiles[1])
+        if self.state.get('sender_receipt') == 'unconfirmed':
+            self.state['status']='recipient_verified';self.save()
 
     # Historical UI executor, retained for regression tests only. The CLI uses phase() below.
     def phase_xctest(self, template, role, profile):
@@ -401,6 +421,8 @@ class Run:
             raise RuntimeError('Review recovery cannot enter another phase')
         if role == 'send' or (role == 'receive' and getattr(self.args,'verify_run',None)):
             self.check_cpu('before_'+role+'_launch')
+        if role == 'receive':self.start_video(profile,self.receiver_video_purpose())
+        setup_video = self.start_video(profile,'receiver-setup') if role == 'preflight' else None
         root = Path(subprocess.check_output(['xcrun','simctl','get_app_container',profile['device'],APP,'data'],text=True).strip())
         folder = root/'Library/Application Support/ScriptedRuns'/self.plan['run_id']
         folder.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -454,6 +476,8 @@ class Run:
                                 'utc':utc(),'elapsed_ms':0})
                 except (OSError,subprocess.SubprocessError):
                     self.state['native_cleanup_failed']=True;self.save()
+            if setup_video is not None and not self.stop_video(setup_video):
+                raise RuntimeError('Receiver setup recording failed; no Send will start')
 
     def observe_payment(self, profile, report=True):
         try:
@@ -491,15 +515,7 @@ class Run:
             try: process.wait(timeout=5)
             except subprocess.TimeoutExpired: process.terminate()
             f.close()
-        for process, f, ready in self.recorders:
-            if process.poll() is None: process.send_signal(signal.SIGINT)
-            try: code = process.wait(timeout=45)
-            except subprocess.TimeoutExpired: process.terminate(); code = 1
-            f.close()
-            if code: self.state['recording_error'] = True
-            elif ready.exists():
-                metadata = json.loads(ready.read_text()); metadata = json.loads((Path(metadata['runDirectory']) / 'run.json').read_text())
-                if metadata['status'] != 'complete': self.state['recording_error'] = True
+        for handle in list(self.recorders):self.stop_video(handle)
         if (self.state.get('recording_error') or self.state.get('diagnostics_error')) and self.state['status'] in ['complete','recipient_verified']: self.state['status'] = 'evidence_failed'
         self.state['finished_at'] = utc(); self.save()
         pairs = [('send_tapped', 'pay_visible'), ('send_tapped', 'accepted'), ('refresh_tapped', 'received'), ('decrypt_tapped', 'decrypted')]
@@ -537,6 +553,7 @@ class Run:
         if end_to_end['status']=='measured':
             print('Separate launch → recipient retained verification, excluding Pay click wait: '+str(end_to_end['adjusted_ms'])+' ms',flush=True)
         rows = ['Crypton single-command run', 'Run: ' + self.plan['run_id'], 'Composed (UTC): ' + self.plan['composed_at'], 'Result: ' + self.state['status'],
+                'Crypton launch: cold process restart; saved data preserved. ME: existing process, not restarted.',
                 '', 'Primary target: launch -> validated saved sender receipt, excluding evidenced Pay review only.',
                 json.dumps(target,sort_keys=True),
                 '', 'Separate end-to-end metric: launch -> exact recipient plaintext and retained copy.',

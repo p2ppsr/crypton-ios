@@ -2,6 +2,9 @@
 
 Record every iOS Crypton / ME UI run from before the first app interaction until the final result or error. Keep the recording running during permission review, user payment approval, app switching and saved-payment recovery. A recording started late is a partial record; note the missing beginning rather than describing it as a complete run.
 
+
+For the scripted two-device send command, capture each device's own activity: receiver setup is a separate short MP4; the normal receive MP4 starts only after the validated sender receipt is saved, before receiver launch/refresh. Do not include the sender's preparation/payment wait in the receiver clip. Pipeline diagnostics remain continuous. Missing-receipt recovery and verification-only clips have distinct labels; disposable self-sends retain one continuous screen capture. See [the scripted recording boundaries](SCRIPTED_SEND_RUNS.md#coldwarm-definitions-and-receive-video-boundaries).
+
 ## Manual simulator runs
 
 Identify the intended simulator with `xcrun simctl list devices booted`, then start:
