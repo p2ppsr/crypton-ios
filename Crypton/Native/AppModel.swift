@@ -149,15 +149,48 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
     }
     #if targetEnvironment(simulator)
     private var scriptedRun: ScriptedRun?
-    private var checkedScript = false
+    private var scriptedInbox: Task<Void,Never>?
+    let scriptedRuntimeID = UUID().uuidString.lowercased()
+    var scriptedExpectedSender:String?
+    var scriptedEvent:((String) -> Void)?
+    var scriptedEngineID:String? { engine?.instanceID }
+    private var scriptedRoot:URL { FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("ScriptedRuns") }
+    func publishScriptRuntime() {
+        let value:JSON = ["driver_version":2,"runtime_id":scriptedRuntimeID,"engine_id":scriptedEngineID ?? "", "pid":ProcessInfo.processInfo.processIdentifier,"idle":!busy && scriptedRun?.finished != false]
+        try? FileManager.default.createDirectory(at:scriptedRoot,withIntermediateDirectories:true)
+        if let data = try? jsonData(value) { try? data.write(to:scriptedRoot.appendingPathComponent("runtime.json"),options:.atomic) }
+    }
+    private func consumeScriptInbox() {
+        guard foreground, !busy, scriptedRun?.finished != false else { return }
+        let pointer = scriptedRoot.appendingPathComponent("pending.txt")
+        guard let bytes = try? Data(contentsOf:pointer), bytes.count <= 36 else { return }
+        try? FileManager.default.removeItem(at:pointer)
+        guard let id = UUID(uuidString:String(decoding:bytes,as:UTF8.self)) else { return }
+        scriptedRun = ScriptedRun(model:self,id:id); scriptedRun?.start()
+    }
     func startScriptIfRequested() {
-        guard !checkedScript else { return }; checkedScript = true
+        // Explicit simulator launch opt-in only. No URL or production control surface.
+        guard scriptedInbox == nil, ProcessInfo.processInfo.arguments.contains("--crypton-script") else { return }
         scriptedRun = ScriptedRun(model:self); scriptedRun?.start()
+        publishScriptRuntime()
+        scriptedInbox = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.consumeScriptInbox()
+                do { try await Task.sleep(nanoseconds:100_000_000) } catch { return }
+            }
+        }
     }
     #endif
     private func crypto() throws -> CryptoEngine {
         if let engine = engine { return engine }
         let engine = CryptoEngine(wallet:try connection(),store:store,inbox:inboxStore)
+        #if targetEnvironment(simulator)
+        engine.scriptWalletIdentity = { [weak self] key in
+            if let expected = self?.scriptedExpectedSender, key != expected { throw CryptonError("Sender wallet profile changed; no payment may proceed") }
+            self?.scriptedEvent?("sender_verified")
+        }
+        engine.scriptStage = { [weak self] stage in self?.scriptedEvent?(stage) }
+        #endif
         engine.progress = { [weak self] value in guard let self = self, self.busy else { return }; self.activity = value; self.status = value }
         self.engine = engine; return engine
     }

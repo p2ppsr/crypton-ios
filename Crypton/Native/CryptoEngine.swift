@@ -1,6 +1,11 @@
 import WebKit
 
 @MainActor final class CryptoEngine: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    let instanceID = UUID().uuidString.lowercased()
+    #if targetEnvironment(simulator)
+    var scriptWalletIdentity:((String) throws -> Void)?
+    var scriptStage:((String) -> Void)?
+    #endif
     private var web: WKWebView!
     private let wallet: WalletConnection
     private let store: DeliveryStore
@@ -165,6 +170,9 @@ import WebKit
                     NSLog("Crypton delivery wallet: %@",method)
                     #endif
                     try store.beforeWallet(session.id,action:session.action,method:method,args:args)
+                    #if targetEnvironment(simulator)
+                    if method == "createAction" { scriptStage?("payment_requested") }
+                    #endif
                     let reviewingPayment = method == "createAction" && wallet is MEWallet
                     if reviewingPayment { timer?.cancel(); timer = nil }
                     defer { if reviewingPayment, operation == token { armTimeout(token) } }
@@ -175,8 +183,17 @@ import WebKit
                         if method == "createAction", let refusal = error as? WalletRefusal, refusal.notCommitted { try store.walletRefused(session.id,refusal:refusal) }
                         throw error
                     }
+                    #if targetEnvironment(simulator)
+                    if method == "getPublicKey", args["identityKey"] as? Bool == true {
+                        let key = try Wire.identity((value as? JSON)?["publicKey"] as? String ?? "")
+                        try scriptWalletIdentity?(key)
+                    }
+                    #endif
                     // Save the returned transaction even if the user cancelled while the wallet was approving it.
                     if method == "createAction" { guard let result = value as? JSON else { throw CryptonError("Invalid wallet transaction.") }; try store.walletReturned(session.id,result:result) }
+                    #if targetEnvironment(simulator)
+                    if method == "createAction" { scriptStage?("wallet_result_saved") }
+                    #endif
                 case "checkpoint":
                     guard let kind = data["kind"] as? String, let v = data["value"] as? JSON else { throw CryptonError("Invalid checkpoint.") }
                     if let session = inboxSession { try session.checkpoint(kind,v) }

@@ -3,6 +3,31 @@ import AVFoundation
 @testable import Crypton
 
 final class CryptonTests: XCTestCase {
+    @MainActor func testScriptedWarmRunReusesEngineAndRejectsChangedRuntime() async throws {
+        let defaults = UserDefaults(suiteName:"scripted-warm-"+UUID().uuidString)!
+        defaults.set(false,forKey:"legacyMessages"); defaults.set(false,forKey:"soundEnabled")
+        let model = AppModel(defaults:defaults,wallet:MemoryWallet())
+        model.choose(key); model.message = "Disposable warm engine validation"; model.process()
+        for _ in 0..<300 { if !model.busy { break }; try await Task.sleep(nanoseconds:10_000_000) }
+        XCTAssertNil(model.error); let engineID = try XCTUnwrap(model.scriptedEngineID)
+        let root = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("ScriptedRuns")
+        for matching in [true,false] {
+            let id = UUID(), folder = root.appendingPathComponent(id.uuidString.lowercased())
+            try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+            defer { try? FileManager.default.removeItem(at:folder) }
+            let plan:JSON = ["run_id":id.uuidString.lowercased(),"role":"preflight","fixture":false,"launch_kind":"warm", "expected_runtime_id":matching ? model.scriptedRuntimeID : UUID().uuidString,"expected_engine_id":engineID]
+            try jsonData(plan).write(to:folder.appendingPathComponent("request.json"))
+            let run = try XCTUnwrap(ScriptedRun(model:model,id:id)); run.start()
+            for _ in 0..<200 { if run.finished { break }; try await Task.sleep(nanoseconds:10_000_000) }
+            XCTAssertTrue(run.finished); XCTAssertEqual(model.scriptedEngineID,engineID)
+            let events = try String(contentsOf:folder.appendingPathComponent("events.jsonl"))
+                .split(separator:"\n").map { try object(Data($0.utf8)) }
+            XCTAssertEqual(events.contains { $0["stage"] as? String == "preflight_complete" },matching)
+            if !matching { XCTAssertEqual(events.last?["send_attempted"] as? Bool,false) }
+            XCTAssertFalse(FileManager.default.fileExists(atPath:folder.appendingPathComponent("request.json").path))
+            XCTAssertNil(ScriptedRun(model:model,id:id),"Consumed plans cannot be replayed")
+        }
+    }
     let key = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     func envelope() throws -> String { try jsonString(["protocol":"crypton","version":2,"sender":key,"ciphertext":Data(repeating:4,count:48).base64EncodedString()]) }
     @MainActor func testExactVerificationRequiresTargetedJournalBeforeCryptography() throws {

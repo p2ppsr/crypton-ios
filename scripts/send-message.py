@@ -9,6 +9,7 @@ import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import secrets
 import json
+import math
 import os
 from pathlib import Path
 import plistlib
@@ -30,7 +31,7 @@ RUNNER = 'com.projectbabbage.CryptonUITests.xctrunner'
 TEST = 'CryptonUITests/CryptonSendRunTests/testDeterministicMessageFlow'
 EVENT = 'CRYPTON_RUN_EVENT '
 FIXTURE_DEVICE = 'Crypton-iOS-Test'
-WALLET_FIELDS = {'review_id','review_age_ms','review_lifetime_ms','stage','outcome','approval','primary_error_name','cleanup_error_name','execution_status','primary_preserved','action_blocked'}
+WALLET_FIELDS = {'review_id','review_age_ms','review_lifetime_ms','stage','outcome','approval','primary_error_name','cleanup_error_name','execution_status','primary_preserved','action_blocked','capture_boundary','capture_mono_ms'}
 
 
 def utc():
@@ -147,8 +148,14 @@ def target_timing(events, wallet_events, fixture=False, sender_device=None, end_
               'fixture': fixture, 'status': 'unavailable'}
     if not launch or not verified: return {**report, 'reason': 'Missing launch or '+('recipient-verification' if end_to_end else 'sender-receipt')+' boundary'}
     def stamp(e): return datetime.fromisoformat(e['utc'].replace('Z', '+00:00')).timestamp()
-    if accepted and stamp(accepted) > stamp(verified): verified=accepted
-    total = (stamp(verified) - stamp(launch)) * 1000
+    if accepted and ((accepted['host_observed_ns']>verified['host_observed_ns'])
+                     if 'host_observed_ns' in accepted and 'host_observed_ns' in verified else stamp(accepted)>stamp(verified)):
+        verified=accepted
+    monotonic = 'host_mono_ns' in launch and 'host_observed_ns' in verified
+    total = ((verified['host_observed_ns']-launch['host_mono_ns'])/1e6 if monotonic else
+             (stamp(verified) - stamp(launch)) * 1000)
+    report['timing_basis'] = 'host_monotonic_observation_upper_bound' if monotonic else 'legacy_device_utc'
+    report['event_observation_included'] = monotonic
     wait = 0
     if not fixture:
         visible = first('pay_visible', 'send')
@@ -156,9 +163,18 @@ def target_timing(events, wallet_events, fixture=False, sender_device=None, end_
         approved = next((e for e in wallet_events if e.get('stage') == 'wallet_payment_review_approved'
                          and visible and review_id and e.get('device') == sender_device
                          and e.get('params',{}).get('review_id') == review_id
-                         and stamp(e) >= stamp(visible)), None)
+                         and ('host_mono_ns' in launch or stamp(e) >= stamp(visible))), None)
         if not visible or not approved: return {**report, 'reason': 'Missing evidenced Pay-visible/approval interval', 'total_ms': round(total, 1)}
-        wait = (stamp(approved) - stamp(visible)) * 1000
+        if monotonic:
+            v,a = visible.get('params',{}),approved.get('params',{})
+            if (v.get('capture_boundary')!='caller_entry' or a.get('capture_boundary')!='caller_entry'
+                    or a.get('approval')!='once' or not all(isinstance(x,(int,float)) and math.isfinite(x) for x in [v.get('capture_mono_ms'),a.get('capture_mono_ms')])):
+                return {**report,'reason':'Missing caller-entry monotonic one-time Pay evidence','total_ms':round(total,1)}
+            if not 0 <= a['capture_mono_ms']-v['capture_mono_ms'] <= total+2:
+                return {**report,'reason':'Invalid monotonic Pay interval','total_ms':round(total,1)}
+            wait = max(0,a['capture_mono_ms']-v['capture_mono_ms']-2) # conservative millisecond rounding bound
+            report['pay_wait_evidence']='ME caller-entry monotonic diagnostics; 2 ms rounding allowance'
+        else:wait = (stamp(approved) - stamp(visible)) * 1000
     if not 0 <= wait <= total: return {**report, 'reason': 'Invalid clock ordering'}
     adjusted = total - wait
     return {**report, 'status': 'measured', 'launch_utc': launch['utc'], 'verified_utc': verified['utc'],
@@ -195,7 +211,7 @@ class Run:
         self.stop_phases = threading.Event()
         self.state = {'status': 'preparing', 'started_at': now, 'run_id': self.plan['run_id'], 'fixture': args.fixture,
                       'sender': profiles[0]['device'], 'receiver': profiles[1]['device'],
-                      'crypton_launch_mode':'cold_process_restart', 'me_launch_mode':'existing_process_not_restarted',
+                      'crypton_launch_mode':getattr(args,'launch_kind','cold'), 'me_launch_mode':'existing_process_not_restarted',
                       'text_sha256': hashlib.sha256(self.plan['message'].encode()).hexdigest(), 'folder': str(self.folder)}
         if original:
             self.state.update(status='verifying',mode='verify_only',original_run=str(original.resolve()),message_id=args.message_id,
@@ -271,12 +287,10 @@ class Run:
             self.logs.append((process, output))
             time.sleep(.1)
             if process.poll() is not None: raise RuntimeError('Native timing capture failed before the UI run')
-        if not getattr(self.args,'verify_run',None):
-            self.start_video(self.profiles[0],'send' if not getattr(self.args,'recovery_only',False) else 'review-recovery')
 
     def start_video(self, profile, purpose):
         device = profile['device']
-        # A disposable self-send already has one continuous sender recording.
+        # Never attach two recorders to the same simulator at once.
         if any(ready.name.startswith(device+'.') for _,_,ready in self.recorders): return None
         ready = self.folder / (device + '.' + purpose + '.ready.json')
         log = (self.folder / (device + '.' + purpose + '.recorder.log')).open('w')
@@ -288,7 +302,7 @@ class Run:
             if process.poll() is not None or time.monotonic()>deadline:raise RuntimeError('Recording did not start; no UI run will begin')
             time.sleep(.1)
         with (self.folder/'recording-events.jsonl').open('a') as output:
-            output.write(json.dumps({'utc':utc(),'device':device,'purpose':purpose,'stage':'ready','run_id':self.plan['run_id']})+'\n')
+            output.write(json.dumps({'utc':utc(),'host_mono_ns':time.monotonic_ns(),'device':device,'purpose':purpose,'stage':'ready','run_id':self.plan['run_id']})+'\n')
         return handle
 
     def stop_video(self, handle):
@@ -316,9 +330,13 @@ class Run:
             return 'receipt-recovery'
         raise RuntimeError('Receiver recording/launch requires saved sender acceptance or explicit receipt recovery')
 
+    def focus_window(self, profile):
+        command(['open','-a',str(Path(os.environ['DEVELOPER_DIR'])/'Applications/Simulator.app') if 'DEVELOPER_DIR' in os.environ else 'Simulator','--args','-CurrentDeviceUDID',profile['device']])
+
     def event(self, e):
         if e.get('run_id') != self.plan['run_id']: raise RuntimeError('Unexpected run identity in UI events')
         with self.state_lock:
+            e = {**e,'host_observed_ns':time.monotonic_ns()}
             self._event(e)
 
     def _event(self, e):
@@ -350,7 +368,7 @@ class Run:
         if stage == 'pay_visible' or (stage == 'progress' and 'approve payment' in e.get('detail','').lower()):
             if not getattr(self,'review_prompted',False):
                 self.review_prompted = True
-                command(['open','-a',str(Path(os.environ['DEVELOPER_DIR'])/'Applications/Simulator.app') if 'DEVELOPER_DIR' in os.environ else 'Simulator','--args','-CurrentDeviceUDID',self.profiles[0]['device']])
+                self.focus_window(self.profiles[0])
                 print('HUMAN ACTION ('+self.profiles[0].get('name',self.profiles[0]['device'])+'): review the final total and click Pay once in ME. Leave Allow up to unchanged.\n'
                       'Composed: '+self.plan['composed_at']+'; run: '+self.plan['run_id'],flush=True)
         if stage == 'accepted':
@@ -358,12 +376,15 @@ class Run:
             self.state.update(status='complete' if self.state.get('recipient_retained') else 'accepted',
                               sender_status='accepted',sender_receipt='confirmed',message_id=e['message_id'])
         if stage == 'retained':
+            if e.get('role')=='receive' and e.get('wallet_identity'):self.state['verified_receiving_wallet']=e['wallet_identity']
             self.state['recipient_retained']=True
             if self.state.get('sender_status') == 'accepted' or self.state.get('sender_receipt') == 'unconfirmed' or getattr(getattr(self,'args',None),'verify_run',None):
                 self.state['status']='complete'
         self.save()
 
     def send_and_verify(self, template):
+        if not self.args.fixture and getattr(self.args,'launch_kind',None)=='cold':
+            self.phase(template,'preflight',self.profiles[0])
         self.phase(template, 'preflight', self.profiles[1])
         try:
             self.phase(template, 'send', self.profiles[0])
@@ -375,12 +396,13 @@ class Run:
             print('Sender receipt missing; checking the exact paid message on the recipient. No resend/payment.\n'
                   'Composed: '+self.plan['composed_at']+'; run: '+self.plan['run_id'],flush=True)
         self.phase(template,'receive',self.profiles[1])
+        self.phase(template,'reopen',self.profiles[1])
         if self.state.get('sender_receipt') == 'unconfirmed':
             self.state['status']='recipient_verified';self.save()
 
     # Historical UI executor, retained for regression tests only. The CLI uses phase() below.
     def phase_xctest(self, template, role, profile):
-        if getattr(self.args,'verify_run',None) and role != 'receive':
+        if getattr(self.args,'verify_run',None) and role not in ['receive','reopen']:
             raise RuntimeError('Verification mode cannot enter a sending phase')
         plan = {**self.plan, 'role': role, 'device':profile['device'], 'recipient_name': self.profiles[1].get('name', 'Peer iOS'),
                 'receiving_key': self.profiles[1].get('receivingKey', ''), 'wallet_identity': self.profiles[1].get('walletIdentity', ''),
@@ -415,30 +437,44 @@ class Run:
             raise RuntimeError('UI test ended without the required ' + expected + ' evidence')
 
     def phase(self, template, role, profile):
-        if getattr(self.args,'verify_run',None) and role != 'receive':
+        if getattr(self.args,'verify_run',None) and role not in ['receive','reopen']:
             raise RuntimeError('Verification mode cannot enter a sending phase')
         if getattr(self.args,'recovery_only',False) and role != 'recover-review':
             raise RuntimeError('Review recovery cannot enter another phase')
         if role == 'send' or (role == 'receive' and getattr(self.args,'verify_run',None)):
             self.check_cpu('before_'+role+'_launch')
+        phase_video = self.start_video(profile,'send' if role=='send' else 'review-recovery') if role in ['send','recover-review'] else None
         if role == 'receive':self.start_video(profile,self.receiver_video_purpose())
-        setup_video = self.start_video(profile,'receiver-setup') if role == 'preflight' else None
+        setup_video = self.start_video(profile,'sender-setup' if profile['device']==self.profiles[0]['device'] else 'receiver-setup') if role == 'preflight' else None
         root = Path(subprocess.check_output(['xcrun','simctl','get_app_container',profile['device'],APP,'data'],text=True).strip())
         folder = root/'Library/Application Support/ScriptedRuns'/self.plan['run_id']
         folder.mkdir(parents=True,exist_ok=True,mode=0o700)
         events_path = folder/'events.jsonl'; events_path.write_text('')
+        warm = ((role=='send' or (role=='preflight' and profile['device']==self.profiles[0]['device']))
+                and getattr(self.args,'launch_kind','cold')=='warm') or (role=='receive' and not self.args.fixture and not getattr(self.args,'verify_run',None))
         plan = {**self.plan,'role':role,'device':profile['device'],'mode':self.state.get('mode','send'),
-                'recipient_name':self.profiles[1].get('name','Peer iOS'),'receiving_key':self.profiles[1].get('receivingKey',''),
-                'wallet_identity':self.profiles[1].get('walletIdentity',''),'message_id':self.state.get('message_id','')}
+                'launch_kind':'warm' if warm else 'cold','verify_profile':role=='preflight' and not self.args.fixture,
+                'sender_identity':self.profiles[0].get('walletIdentity',''),
+                'recipient_name':self.profiles[1].get('name','Peer iOS'),'receiving_key':(profile if role=='preflight' else self.profiles[1]).get('receivingKey',''),
+                'wallet_identity':(profile.get('walletIdentity','') if role=='preflight' else self.state.get('verified_receiving_wallet',self.profiles[1].get('walletIdentity','')) if role=='reopen' else self.profiles[1].get('walletIdentity','')),'message_id':self.state.get('message_id','')}
+        if warm:
+            runtime = json.loads((folder.parent/'runtime.json').read_text())
+            if runtime.get('driver_version')!=2 or not runtime.get('idle') or not runtime.get('engine_id'):
+                raise RuntimeError('Warm launch requires a completed prior run with a live crypto engine; no Send was attempted')
+            plan.update(expected_runtime_id=runtime['runtime_id'],expected_engine_id=runtime['engine_id'])
         write(folder/'request.json',plan)
         if role == 'send':self.state['status']='sending';self.save()
-        launch = ['launch','--terminate-running-process',profile['device'],APP]
+        launch = ['launch',*([] if warm else ['--terminate-running-process']),profile['device'],APP]
         if self.args.fixture:launch += ['--uitesting','--sdk-wallet-fixture','--messagebox-fixture']
         launch += ['--crypton-script',self.plan['run_id']]
         offset = 0; pay_seen = False; deadline = time.monotonic()+self.args.timeout+30
         launched = False; completed = False
         try:
-            self.event({'run_id':self.plan['run_id'],'role':role,'stage':'launch_requested','utc':utc(), 'elapsed_ms':0})
+            self.event({'run_id':self.plan['run_id'],'role':role,'stage':'launch_requested','utc':utc(), 'elapsed_ms':0,'host_mono_ns':time.monotonic_ns(),'launch_kind':plan['launch_kind']})
+            self.focus_window(profile)
+            if warm:
+                temporary = folder.parent/'pending.tmp';temporary.write_text(self.plan['run_id'])
+                temporary.replace(folder.parent/'pending.txt')
             sim(*launch,stdout=subprocess.DEVNULL)
             launched = True
             while time.monotonic()<deadline:
@@ -452,7 +488,7 @@ class Run:
                         self.event(event)
                         if event['stage']=='failed':raise RuntimeError(event.get('reason','Native script failed'))
                         if event['stage']=='phase_complete':
-                            expected={'preflight':'preflight_complete','send':'accepted','receive':'retained','recover-review':'unpaid_review_recovered'}[role]
+                            expected={'preflight':'preflight_complete','send':'accepted','receive':'retained','reopen':'retained','recover-review':'unpaid_review_recovered'}[role]
                             if not any(e['role']==role and e['stage']==expected for e in self.events):raise RuntimeError('Missing '+expected+' evidence')
                             completed = True
                             return
@@ -464,6 +500,8 @@ class Run:
         finally:
             (folder/'request.json').unlink(missing_ok=True)
             (folder/'request.tmp').unlink(missing_ok=True)
+            pointer = folder.parent/'pending.txt'
+            if pointer.exists() and pointer.read_text()==self.plan['run_id']:pointer.unlink()
             if launched and not completed:
                 # A suspended native timeout cannot be trusted to execute after
                 # the host stops recording. Stop only this scripted app. ME may
@@ -477,7 +515,8 @@ class Run:
                 except (OSError,subprocess.SubprocessError):
                     self.state['native_cleanup_failed']=True;self.save()
             if setup_video is not None and not self.stop_video(setup_video):
-                raise RuntimeError('Receiver setup recording failed; no Send will start')
+                raise RuntimeError('Setup recording failed; no Send will start')
+            if phase_video is not None:self.stop_video(phase_video)
 
     def observe_payment(self, profile, report=True):
         try:
@@ -497,7 +536,7 @@ class Run:
                 started=next(e for e in self.events if e['role']=='send' and e['stage']=='started')
                 elapsed=(datetime.fromisoformat(visible['at'])-datetime.fromisoformat(started['utc'])).total_seconds()*1000
                 self.event({'run_id':self.plan['run_id'],'role':'send','stage':'pay_visible','utc':visible['at'],'elapsed_ms':elapsed,
-                            'label':'Pay '+str(visible['params']['spending_amount'])+' sats','review_id':visible.get('params',{}).get('review_id'),'source':'ME spending-modal diagnostic'})
+                            'label':'Pay '+str(visible['params']['spending_amount'])+' sats','params':{k:v for k,v in visible.get('params',{}).items() if k in WALLET_FIELDS},'review_id':visible.get('params',{}).get('review_id'),'source':'ME spending-modal diagnostic'})
                 return True
         except (OSError,ValueError,KeyError,StopIteration,subprocess.CalledProcessError):pass
         return False
@@ -553,7 +592,7 @@ class Run:
         if end_to_end['status']=='measured':
             print('Separate launch → recipient retained verification, excluding Pay click wait: '+str(end_to_end['adjusted_ms'])+' ms',flush=True)
         rows = ['Crypton single-command run', 'Run: ' + self.plan['run_id'], 'Composed (UTC): ' + self.plan['composed_at'], 'Result: ' + self.state['status'],
-                'Crypton launch: cold process restart; saved data preserved. ME: existing process, not restarted.',
+                'Sender launch: '+getattr(self.args,'launch_kind','cold')+'; saved data preserved. ME: existing process, not restarted.',
                 '', 'Primary target: launch -> validated saved sender receipt, excluding evidenced Pay review only.',
                 json.dumps(target,sort_keys=True),
                 '', 'Separate end-to-end metric: launch -> exact recipient plaintext and retained copy.',
@@ -584,6 +623,7 @@ def main():
     p.add_argument('--sdk-root', type=Path, default=os.environ.get('CRYPTON_SDK_ROOT'))
     p.add_argument('--timeout', type=int, default=300, help='Maximum seconds per UI phase; never overrides ME review expiry')
     p.add_argument('--cpu-wait',type=int,default=30,help='Seconds to wait for CPU headroom at each gate, from 0 to 300; never bypasses the gate')
+    p.add_argument('--launch-kind',choices=['cold','warm'],default='cold',help='Sender process/engine: cold restart or require existing runtime; warm never builds or installs')
     p.add_argument('--dry-run', action='store_true', help='Validate profiles and print plan without UI or wallet actions')
     a = p.parse_args()
     if not 0 <= a.cpu_wait <= 300:p.error('--cpu-wait must be from 0 to 300 seconds')
@@ -628,7 +668,8 @@ def main():
     try:
         run.check_cpu('before_build')
         build = ARTIFACTS / ('send-run-fixture-build' if a.fixture else 'send-run-release-build')
-        with (run.folder / 'build.log').open('w') as log:
+        if a.launch_kind=='cold':
+          with (run.folder / 'build.log').open('w') as log:
             command(['xcodebuild', '-project', str(REPO / 'Crypton.xcodeproj'), '-scheme', 'Crypton', '-configuration', 'Debug' if a.fixture else 'Release',
                      '-destination', 'generic/platform=iOS Simulator', '-derivedDataPath', str(build), 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES', 'CODE_SIGN_IDENTITY=-',
                      'build'], stdout=log, stderr=subprocess.STDOUT)
@@ -650,12 +691,13 @@ def main():
                 time.sleep(.1)
         for device in dict.fromkeys(p['device'] for p in active_profiles):
             if not a.fixture: sim('get_app_container', device, 'app.metanet.explorer', 'app', stdout=subprocess.DEVNULL)
-            sim('install', device, str(products / 'Crypton.app'))
+            if a.launch_kind=='cold':sim('install', device, str(products / 'Crypton.app'))
 
         if not a.verify_run:
             run.send_and_verify(templates[0])
         else:
             run.phase(templates[0], 'receive', profiles[1])
+            run.phase(templates[0], 'reopen', profiles[1])
     except CPUNotReady as e:
         run.state.update(status='deferred_cpu_busy',error=str(e))
         print('Deferred:',e,file=sys.stderr)

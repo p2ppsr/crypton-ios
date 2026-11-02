@@ -15,7 +15,66 @@ spec = importlib.util.spec_from_file_location('send_command', Path(__file__).wit
 send = importlib.util.module_from_spec(spec); spec.loader.exec_module(send)
 
 class Contract(unittest.TestCase):
-    def test_initial_capture_keeps_both_diagnostic_streams_but_only_sender_video(self):
+    def setUp(self):
+        from unittest.mock import patch
+        self.focus=patch.object(send.Run,'focus_window').start()
+        self.video=patch.object(send.Run,'start_video',return_value=None).start()
+        self.addCleanup(patch.stopall)
+    def test_warm_launch_uses_existing_runtime_and_queues_only_after_clock_start(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Warm',fixture=False,timeout=30,launch_kind='warm'),[{'device':'sender','walletIdentity':'pinned-sender'},{'device':'peer'}])
+            root=Path(folder)/'container/Library/Application Support/ScriptedRuns'
+            root.mkdir(parents=True)
+            send.write(root/'runtime.json',{'driver_version':2,'idle':True,'runtime_id':'same-process','engine_id':'same-engine'})
+            def launch(*args,**kwargs):
+                self.assertNotIn('--terminate-running-process',args)
+                self.assertEqual(run.events[-1]['stage'],'launch_requested')
+                self.assertEqual((root/'pending.txt').read_text(),run.plan['run_id'])
+                plan=json.loads((root/run.plan['run_id']/'request.json').read_text())
+                self.assertEqual(plan['expected_runtime_id'],'same-process');self.assertEqual(plan['expected_engine_id'],'same-engine')
+                self.assertEqual(plan['sender_identity'],'pinned-sender')
+                (root/run.plan['run_id']/'events.jsonl').write_text(''.join(json.dumps({'run_id':run.plan['run_id'],'role':'send','stage':stage,'utc':'now','message_id':'a'*64})+'\n' for stage in ['accepted','phase_complete']))
+            with patch.object(run,'check_cpu'),patch.object(send.subprocess,'check_output',return_value=str(Path(folder)/'container')+'\n'),patch.object(send,'sim',side_effect=launch):run.phase(None,'send',run.profiles[0])
+            self.assertFalse((root/'pending.txt').exists())
+    def test_missing_warm_engine_cannot_fall_back_to_cold_send(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Warm',fixture=False,timeout=30,launch_kind='warm'),[{'device':'sender'},{'device':'peer'}])
+            root=Path(folder)/'container/Library/Application Support/ScriptedRuns'
+            root.mkdir(parents=True)
+            send.write(root/'runtime.json',{'driver_version':2,'idle':True,'runtime_id':'same-process','engine_id':''})
+            with patch.object(run,'check_cpu'),patch.object(send.subprocess,'check_output',return_value=str(Path(folder)/'container')+'\n'),patch.object(send,'sim') as launch:
+                with self.assertRaisesRegex(RuntimeError,'Warm launch requires'):run.phase(None,'send',run.profiles[0])
+                launch.assert_not_called()
+            self.assertFalse((run.folder/'send-claimed').exists())
+    def test_new_timing_uses_one_host_clock_and_conservative_same_wallet_pay_interval(self):
+        events=[{'role':'send','stage':'launch_requested','utc':'2026-11-02T00:00:00Z','host_mono_ns':1000000000},
+                {'role':'send','stage':'pay_visible','utc':'2026-11-02T00:00:05Z','review_id':'own','params':{'capture_boundary':'caller_entry','capture_mono_ms':5000}},
+                {'role':'send','stage':'accepted','utc':'2026-11-02T01:00:00Z','host_observed_ns':22000000000},
+                {'role':'receive','stage':'retained','utc':'2026-11-01T23:00:00Z','host_observed_ns':26000000000}]
+        wallet=[{'stage':'wallet_payment_review_approved','device':'sender','utc':'2026-11-02T00:00:07Z','params':{'review_id':'own','capture_boundary':'caller_entry','capture_mono_ms':7000,'approval':'once'}}]
+        r=send.target_timing(events,wallet,sender_device='sender')
+        self.assertEqual(r['total_ms'],21000);self.assertEqual(r['pay_wait_ms'],1998);self.assertEqual(r['adjusted_ms'],19002)
+        self.assertEqual(send.target_timing(events,wallet,sender_device='sender',end_to_end=True)['total_ms'],25000)
+        wallet[0]['params']['capture_mono_ms']=4999
+        self.assertEqual(send.target_timing(events,wallet,sender_device='sender')['status'],'unavailable')
+        wallet[0]['params'].pop('capture_mono_ms')
+        self.assertEqual(send.target_timing(events,wallet,sender_device='sender')['status'],'unavailable')
+    def test_sender_clip_starts_after_cpu_gate_and_stops_at_phase_completion(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Recorded',fixture=True,timeout=30),[{'device':'sender'},{'device':'peer'}])
+            order=[]
+            def launch(*args,**kwargs):
+                order.append('launch')
+                self.assertEqual(run.events[-1]['stage'],'launch_requested')
+                path=Path(folder)/'container/Library/Application Support/ScriptedRuns'/run.plan['run_id']/'events.jsonl'
+                path.write_text(''.join(json.dumps({'run_id':run.plan['run_id'],'role':'send','stage':stage,'utc':'now','message_id':'a'*64})+'\n' for stage in ['accepted','phase_complete']))
+            with patch.object(run,'check_cpu',side_effect=lambda stage:order.append('cpu')),patch.object(run,'start_video',side_effect=lambda profile,purpose:order.append(purpose+'_video') or 'handle'),patch.object(run,'stop_video',side_effect=lambda handle:order.append('stop_video') or True),patch.object(send.subprocess,'check_output',return_value=str(Path(folder)/'container')+'\n'),patch.object(send,'sim',side_effect=launch):
+                run.phase(None,'send',run.profiles[0])
+            self.assertEqual(order,['cpu','send_video','launch','stop_video'])
+    def test_initial_capture_keeps_diagnostics_continuous_without_early_video(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
             for verify in [False,True]:
@@ -26,8 +85,7 @@ class Contract(unittest.TestCase):
                     run.start_capture()
                     devices=[call.args[0][3] for call in process.call_args_list]
                     self.assertEqual(devices,['peer'] if verify else ['sender','peer'])
-                    if verify:video.assert_not_called()
-                    else:video.assert_called_once_with(run.profiles[0],'send')
+                    video.assert_not_called()
                 for _,output in run.logs:output.close()
     def test_cpu_gate_requires_three_quiet_intervals_and_ignores_boot_average(self):
         def output(samples):
@@ -247,7 +305,7 @@ class Contract(unittest.TestCase):
                 if role=='receive':
                     self.assertEqual(run.state['message_id'],'b'*64);run.state['status']='complete'
             with patch.object(run,'phase',side_effect=phase):run.send_and_verify(None)
-            self.assertEqual(phases,['preflight','send','receive'])
+            self.assertEqual(phases,['preflight','send','receive','reopen'])
             self.assertEqual(run.state['status'],'recipient_verified')
             self.assertEqual(run.state['sender_receipt'],'unconfirmed')
             self.assertEqual(run.state['sender_error'],'Submission response lost')
@@ -295,7 +353,7 @@ class Contract(unittest.TestCase):
                     self.assertEqual(run.receiver_video_purpose(),'receive')
                     event('retained','receive',message_id='d'*64)
             with patch.object(run,'phase',side_effect=phase):run.send_and_verify(None)
-            self.assertEqual(phases,['preflight','send','receive'])
+            self.assertEqual(phases,['preflight','send','receive','reopen'])
             self.assertEqual(run.state['status'],'complete');self.assertEqual(run.state['sender_receipt'],'confirmed')
     def test_unaccepted_receiver_cannot_start_video_or_launch(self):
         from unittest.mock import patch
@@ -329,6 +387,7 @@ class Contract(unittest.TestCase):
             with patch.object(run,'start_video',side_effect=video),patch.object(run,'stop_video',side_effect=lambda handle:trace.append(handle+'_stopped') or True),patch.object(send.subprocess,'check_output',return_value=str(Path(folder)/'container')+'\n'),patch.object(send,'sim',side_effect=launch):
                 run.phase(None,'preflight',run.profiles[1])
                 self.assertEqual(trace,['receiver-setup_video','preflight_launch','receiver-setup_stopped'])
+                send.write(Path(folder)/'container/Library/Application Support/ScriptedRuns/runtime.json',{'driver_version':2,'idle':True,'runtime_id':'runtime','engine_id':'engine'})
                 run.event({'run_id':run.plan['run_id'],'role':'send','stage':'accepted','message_id':'a'*64,'utc':'now'})
                 run.phase(None,'receive',run.profiles[1])
             self.assertEqual(trace[-2:],['receive_video','receive_launch'])
@@ -354,7 +413,7 @@ class Contract(unittest.TestCase):
                     run.event({'run_id':run.plan['run_id'],'utc':'now','role':'send','stage':'accepted','message_id':'e'*64})
                 elif role=='receive':run.state['status']='complete'
             with patch.object(run,'phase',side_effect=phase):run.send_and_verify(None)
-            self.assertEqual(phases,['preflight','send','receive'])
+            self.assertEqual(phases,['preflight','send','receive','reopen'])
     def test_pre_send_failure_without_a_claim_does_not_block_a_new_run(self):
         import threading
         with tempfile.TemporaryDirectory() as folder:
@@ -380,6 +439,7 @@ class Contract(unittest.TestCase):
             run=send.Run.__new__(send.Run);run.folder=Path(folder);run.plan={'run_id':'11111111-1111-1111-1111-111111111111'}
             run.profiles=[{'device':'sender'},{'device':'receiver'}];run.args=types.SimpleNamespace(timeout=30,fixture=False)
             run.state={'sender_receipt':'unconfirmed','sender_error':'Lost response','message_id':'a'*64};run.events=[];run.state_lock=threading.RLock()
+            run.args.fixture=True
             with patch.object(run,'start_video'),patch.object(send.subprocess,'check_output',return_value=str(Path(folder)/'container')+'\n'),patch.object(send,'sim',side_effect=RuntimeError('Launch failed')):
                 with self.assertRaisesRegex(RuntimeError,'Launch failed'):run.phase(None,'receive',run.profiles[1])
             self.assertFalse((Path(folder)/'container/Library/Application Support/ScriptedRuns'/run.plan['run_id']/'request.json').exists())

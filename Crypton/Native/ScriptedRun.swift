@@ -14,22 +14,27 @@ import CryptoKit
     private var sendingAfter = Double.infinity
     private var announcedPayment = false
     private var task: Task<Void,Never>?
-    init?(model:AppModel) {
+    private(set) var finished = false
+    init?(model:AppModel,id supplied:UUID? = nil) {
         let args = ProcessInfo.processInfo.arguments
-        guard let index = args.firstIndex(of:"--crypton-script"), args.indices.contains(index+1),
-              let id = UUID(uuidString:args[index+1]) else { return nil }
+        let id:UUID
+        if let supplied = supplied { id = supplied }
+        else {
+            guard let index = args.firstIndex(of:"--crypton-script"), args.indices.contains(index+1),
+                  let parsed = UUID(uuidString:args[index+1]) else { return nil }; id = parsed
+        }
         let root = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("ScriptedRuns")
         let folder = root.appendingPathComponent(id.uuidString.lowercased(),isDirectory:true)
         let request = folder.appendingPathComponent("request.json")
         guard let bytes = try? Data(contentsOf:request) else { return nil }
         try? FileManager.default.removeItem(at:request)
         guard bytes.count <= 100_000, let value = try? object(bytes), value["run_id"] as? String == id.uuidString.lowercased(),
-              let role = value["role"] as? String, ["preflight","send","receive","recover-review"].contains(role) else { return nil }
+              let role = value["role"] as? String, ["preflight","send","receive","reopen","recover-review"].contains(role) else { return nil }
         self.model = model; self.folder = folder; self.plan = value; self.role = role
     }
     private func event(_ stage:String,_ fields:JSON = [:]) {
         let clock = ISO8601DateFormatter(); clock.formatOptions = [.withInternetDateTime,.withFractionalSeconds]
-        var e:JSON = ["run_id":plan["run_id"]!,"role":role,"stage":stage,"utc":clock.string(from:Date()),"elapsed_ms":(ProcessInfo.processInfo.systemUptime-began)*1000]
+        var e:JSON = ["run_id":plan["run_id"]!,"role":role,"stage":stage,"utc":clock.string(from:Date()),"elapsed_ms":(ProcessInfo.processInfo.systemUptime-began)*1000,"mono_ms":ProcessInfo.processInfo.systemUptime*1000]
         fields.forEach { e[$0.key] = $0.value }
         guard var data = try? jsonData(e) else { return }; data.append(10)
         let file = folder.appendingPathComponent("events.jsonl")
@@ -76,13 +81,27 @@ import CryptoKit
     func start() {
         guard !started else { return }; started = true
         task = Task { [self] in
+            defer { model.scriptedExpectedSender = nil; model.scriptedEvent = nil; finished = true; model.publishScriptRuntime() }
             do {
-                event("started"); model.screen = .home; event("app_ready")
+                event("started",["runtime_id":model.scriptedRuntimeID,"engine_id":model.scriptedEngineID ?? "","pid":ProcessInfo.processInfo.processIdentifier])
+                if plan["launch_kind"] as? String == "warm" {
+                    try require(plan["expected_runtime_id"] as? String == model.scriptedRuntimeID &&
+                                !(model.scriptedEngineID ?? "").isEmpty && plan["expected_engine_id"] as? String == model.scriptedEngineID,
+                                "Warm run requires the same existing Crypton process and crypto engine; no Send was attempted")
+                }
+                model.screen = .home; event("app_ready")
                 try require(!model.legacy && !model.disappearSend && !model.disappearReceive,"Scripted runs require Crypton v2 and retained sent/received copies")
                 let fixture = plan["fixture"] as? Bool == true
                 try require(model.walletMode == (fixture ? "json" : "me"),"The configured wallet mode does not match this run")
                 event("settings_verified")
-                if role == "preflight" { event("preflight_complete"); event("phase_complete"); return }
+                if role == "preflight" {
+                    if plan["verify_profile"] as? Bool == true {
+                        model.identity(); try await settle()
+                        try require(model.sharedIdentity?.key == plan["receiving_key"] as? String && model.sharedIdentity?.walletIdentity == plan["wallet_identity"] as? String,"Receiver wallet profile changed")
+                        event("profile_verified")
+                    }
+                    event("preflight_complete"); event("phase_complete"); return
+                }
                 if role == "recover-review" {
                     try require(plan["mode"] as? String == "recover_review","Recovery mode is required")
                     guard let id = plan["delivery_id"] as? String, UUID(uuidString:id) != nil,
@@ -113,6 +132,12 @@ import CryptoKit
                 }
                 guard let text = plan["message"] as? String else { throw CryptonError("Missing scripted text") }
                 if role == "send" {
+                    if !fixture { model.scriptedExpectedSender = try Wire.identity(plan["sender_identity"] as? String ?? "") }
+                    var identityReported = false
+                    model.scriptedEvent = { [weak self] stage in
+                        if stage == "sender_verified" { if identityReported { return }; identityReported = true }
+                        self?.event(stage)
+                    }
                     if fixture { model.choose("self") }
                     else {
                         let card:JSON = ["protocol":"crypton-contact","version":1,"name":plan["recipient_name"]!,"receivingKey":plan["receiving_key"]!,"walletIdentity":plan["wallet_identity"]!]
@@ -131,7 +156,16 @@ import CryptoKit
                 guard let id = plan["message_id"] as? String else { throw CryptonError("Missing message ID") }
                 _ = try InboxStore.messageID(id)
                 model.showInbox()
-                if !fixture, let receivingWallet = plan["wallet_identity"] as? String { model.inboxWallet = try Wire.identity(receivingWallet) }
+                if (!fixture || role == "reopen"), let receivingWallet = plan["wallet_identity"] as? String { model.inboxWallet = try Wire.identity(receivingWallet) }
+                if role == "reopen" {
+                    model.showInboxMessage(id); event("decrypt_tapped")
+                    model.receive("open"); try await settle()
+                    try require(model.inboxContent?["text"] as? String == text,"Reopened plaintext does not match the original run")
+                    event("decrypted")
+                    let saved = try model.inboxStore.get(model.inboxWallet,id)
+                    try require(saved["read"] as? Bool == true && !InboxStore.pending(saved),"Restart lost the retained message")
+                    event("retained",["message_id":id]); event("phase_complete"); return
+                }
                 var found = false, more = false
                 for attempt in 0..<10 {
                     event(attempt == 0 ? "refresh_tapped" : "refresh_retry",["attempt":attempt])
@@ -148,7 +182,7 @@ import CryptoKit
                 model.closeInboxMessage(); model.showInboxMessage(id)
                 let saved = try model.inboxStore.get(model.inboxWallet,id)
                 try require(saved["read"] as? Bool == true && !InboxStore.pending(saved),"The read message was not retained")
-                event("retained",["message_id":id]); event("phase_complete")
+                event("retained",["message_id":id,"wallet_identity":model.inboxWallet]); event("phase_complete")
             } catch {
                 var fields:JSON = ["reason":error.localizedDescription,"send_attempted":attemptedSend]
                 if role == "send", attemptedSend, !model.busy,
