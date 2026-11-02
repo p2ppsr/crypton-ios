@@ -183,3 +183,28 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     console.log('ME page: lost command response recovers on the owning page, with no early return or duplicate payment invocation.');
   } finally {for(const t of timers)clearTimeout(t)}
 })().catch(error=>{console.error(error);process.exitCode=1});
+
+(async () => {
+  const timers=new Set(), events={}, calls=[], returns=[];
+  let walletFinished=false;
+  const status={textContent:''}, link={href:'crypton-wallet://return/network',hidden:true,addEventListener:()=>{}};
+  const sandbox={AbortController,clearTimeout,crypto:require('node:crypto').webcrypto,
+    document:{hidden:false,getElementById:id=>id==='status'?status:link},
+    setTimeout:(fn,ms)=>{const t=setTimeout(fn,Math.min(ms,10));timers.add(t);return t},
+    fetch:async path=>{
+      if(path==='result'){walletFinished=true;return {ok:true}}
+      return {ok:true,json:async()=>({finished:false,foregroundRequired:walletFinished,command:walletFinished?null:{id:'payment-first',call:'createAction',type:'CWI',isInvocation:true,args:{}}})};
+    }
+  };
+  sandbox.window=sandbox;sandbox.addEventListener=(name,fn)=>{events[name]=fn};
+  sandbox.ReactNativeWebView={postMessage:text=>{const m=JSON.parse(text);(m.type==='CRYPTON_RETURN'?returns:calls).push(m)}};
+  vm.createContext(sandbox);
+  try {
+    vm.runInContext(fs.readFileSync('Crypton/Engine/me.js','utf8'),sandbox);
+    await pause(40);assert.equal(calls.length,1);assert.equal(returns.length,0,'Never leave an outstanding wallet payment');
+    await events.message({source:null,data:{id:'payment-first',type:'CWI',isInvocation:false,status:'success',result:{}}});
+    await pause(40);assert.equal(returns.length,1);assert.equal(calls.length,1);
+    assert.match(status.textContent,/MessageBox networking/);
+    console.log('ME page: explicit network handoff returns only after the wallet result is saved; no payment is interrupted or replayed.');
+  } finally {for(const t of timers)clearTimeout(t)}
+})().catch(error=>{console.error(error);process.exitCode=1});

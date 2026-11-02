@@ -54,7 +54,7 @@ import WebKit
         do { return try await start("runDelivery",request:["action":action,"record":try store.get(id)]) }
         catch { try? store.saveError(id,error); throw error }
     }
-    /// One native ME visit covers quotation, revalidation and the final wallet review.
+    /// One ME session covers preparation and review; native submission returns to Crypton.
     /// Each phase still uses the existing journal and wallet/HTTP validators.
     func prepareAndSend(_ id:String) async throws -> Any {
         let me = wallet as? MEWallet
@@ -219,6 +219,12 @@ import WebKit
         else if let session = delivery { try store.beforeHTTP(session.id,action:session.action,url:url,method:method,body:body) }
         else { throw CryptonError("Missing MessageBox authorization.") }
         let timingToken = operation ?? ""
+        // Paid submission and inbox work may outlive iOS's brief background
+        // allowance. Return only after the signing/payment wallet call finishes.
+        if method == "POST", ["/sendMessage","/listMessages","/acknowledgeMessage"].contains(url.path) {
+            try await (wallet as? MEWallet)?.prepareForNetwork()
+        }
+        guard operation == timingToken else { throw CancellationError() }
         trace("http." + url.path + ".start",token:timingToken)
         defer { trace("http." + url.path + ".finished",token:timingToken) }
         var request = URLRequest(url:url); request.httpMethod = method

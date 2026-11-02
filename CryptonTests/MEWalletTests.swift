@@ -82,6 +82,49 @@ final class MEWalletTests: XCTestCase {
         XCTAssertEqual(ack.status,200); ack.sent?(); _ = try await job.value
         XCTAssertTrue(try next(owner)["command"] is NSNull,"A completed command cannot be recovered as a new invocation")
     }
+    @MainActor func testNetworkingWaitsForCryptonActiveAndRejectsConcurrentWalletCall() async throws {
+        let opened = expectation(description:"Wallet opened")
+        var foreground = false, ready = false
+        let me = MEWallet(open:{ _ in opened.fulfill(); return true },foreground:{foreground},backgroundTime:false)
+        defer { me.cancel() }
+        me.beginOperation()
+        let call = Task { try await me.call("isAuthenticated",[:]) }
+        await fulfillment(of:[opened],timeout:5)
+        let token = me.token, host = String(me.origin.dropFirst("http://".count))
+        func next() throws -> JSON { try object(me.serve(LoopbackRequest(method:"GET",path:"/"+token+"/next",headers:["host":host],body:Data())).body) }
+        do { try await me.prepareForNetwork(); XCTFail("A pending wallet prompt was bypassed") } catch { }
+        let command = try XCTUnwrap(try next()["command"] as? JSON)
+        let result:JSON = ["id":command["id"]!,"type":"CWI","isInvocation":false,"status":"success","result":["authenticated":true]]
+        let ack = me.serve(LoopbackRequest(method:"POST",path:"/"+token+"/result",headers:["host":host,"origin":me.origin,"content-type":"application/json"],body:try jsonData(result)))
+        ack.sent?(); _ = try await call.value
+        let network = Task { try await me.prepareForNetwork(); ready = true }
+        for _ in 0..<50 { if try next()["foregroundRequired"] as? Bool == true { break }; await Task.yield() }
+        XCTAssertEqual(try next()["foregroundRequired"] as? Bool,true)
+        XCTAssertTrue(try next()["command"] is NSNull,"A networking handoff cannot queue a wallet invocation")
+        do { _ = try await me.call("isAuthenticated",[:]); XCTFail("Concurrent wallet call during handoff") } catch { }
+        XCTAssertTrue(me.returned(URL(string:"crypton-wallet://return/"+token)!))
+        await Task.yield(); XCTAssertFalse(ready,"A callback alone cannot start background networking")
+        foreground = true; me.resumed(); try await network.value
+        XCTAssertTrue(ready); XCTAssertEqual(try next()["foregroundRequired"] as? Bool,false)
+    }
+    @MainActor func testCancellingForegroundHandoffCannotStartNetworking() async throws {
+        let opened = expectation(description:"Wallet opened")
+        let me = MEWallet(open:{ _ in opened.fulfill(); return true },foreground:{false},backgroundTime:false)
+        me.beginOperation()
+        let call = Task { try await me.call("isAuthenticated",[:]) }
+        await fulfillment(of:[opened],timeout:5)
+        let headers = ["host":String(me.origin.dropFirst("http://".count))]
+        let path = "/"+me.token
+        let command = try XCTUnwrap(try object(me.serve(LoopbackRequest(method:"GET",path:path+"/next",headers:headers,body:Data())).body)["command"] as? JSON)
+        var h = headers; h["origin"] = me.origin; h["content-type"] = "application/json"
+        let ack = me.serve(LoopbackRequest(method:"POST",path:path+"/result",headers:h,body:try jsonData(["id":command["id"]!,"type":"CWI","isInvocation":false,"status":"success","result":["authenticated":true]])))
+        ack.sent?(); _ = try await call.value
+        let network = Task { try await me.prepareForNetwork() }
+        for _ in 0..<50 { if try object(me.serve(LoopbackRequest(method:"GET",path:path+"/next",headers:headers,body:Data())).body)["foregroundRequired"] as? Bool == true { break }; await Task.yield() }
+        me.cancel()
+        do { try await network.value; XCTFail("Cancelled handoff started networking") } catch { }
+        XCTAssertTrue(me.token.isEmpty)
+    }
     @MainActor func testBobWalletUsesSeparateSchemeWithoutOfficialFallback() async throws {
         let opened = expectation(description:"Bob wallet opened"); var link:URL?
         let wallet = MEWallet(open:{ link = $0; opened.fulfill(); return true },foreground:{false},backgroundTime:false,scheme:"metanet-bob")
@@ -251,7 +294,6 @@ final class MEWalletTests: XCTestCase {
         super.init()
         let content = WKUserContentController(); content.add(self,name:"fixtureME")
         content.addUserScript(WKUserScript(source:"window.ReactNativeWebView={postMessage:value=>window.webkit.messageHandlers.fixtureME.postMessage(value)}",injectionTime:.atDocumentStart,forMainFrameOnly:true))
-        content.addUserScript(WKUserScript(source:"setInterval(()=>{const link=document.getElementById('return');if(link&&!link.hidden)link.click()},100)",injectionTime:.atDocumentEnd,forMainFrameOnly:true))
         let config = WKWebViewConfiguration(); config.userContentController = content; config.websiteDataStore = .nonPersistent()
         web = WKWebView(frame:CGRect(x:0,y:0,width:2,height:2),configuration:config); web.navigationDelegate = self
         // ME's page correctly refuses wallet calls while hidden. Attach the
@@ -523,7 +565,7 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         do { _ = try await page.wallet.call("getPublicKey",[:]); XCTFail("ME denial ignored") } catch { XCTAssertTrue(error.localizedDescription.contains("declined")) }
         XCTAssertGreaterThanOrEqual(page.requests,5)
     }
-    @MainActor func testContactIdentityAndSingleVisitSend() async throws {
+    @MainActor func testContactIdentityAndForegroundSubmission() async throws {
         try await available()
         let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at:folder) }
@@ -540,7 +582,7 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         let beforeStats = try await fixture("delivery-stats")
         let beforeLaunches = page.launches, before = integer(beforeStats["payments"])!
         _ = try await engine.prepareAndSend(id)
-        XCTAssertEqual(page.launches,beforeLaunches+1,"Quote and send must share one ME capability page")
+        XCTAssertEqual(page.launches,beforeLaunches+2,"Keep preparation in one session; return to Crypton for submission and ME for response verification")
         XCTAssertEqual(try store.get(id)["state"] as? String,"SENT")
         let sentStats = try await fixture("delivery-stats")
         let paymentCount = integer(sentStats["payments"])
@@ -612,7 +654,7 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         XCTAssertEqual(integer(after["quotes"]),integer(before["quotes"])!+2)
         XCTAssertEqual(integer(after["authHandshakes"]),integer(before["authHandshakes"])!+1)
     }
-    @MainActor func testComposerSelfSendUsesOneWalletVisitIncludingEncryption() async throws {
+    @MainActor func testComposerSelfSendReturnsForForegroundSubmission() async throws {
         try await available()
         let config = try await fixture("delivery-config"), folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at:folder) }
@@ -629,7 +671,7 @@ final class MEAndDeliveryIntegrationTests: XCTestCase {
         XCTAssertEqual(model.screen,.delivery)
         XCTAssertEqual(try store.get(model.deliveryID)["state"] as? String,"SENT")
         XCTAssertEqual(model.status,"MessageBox delivery complete"); XCTAssertTrue(model.statusReady)
-        XCTAssertEqual(page.launches,1,"Self encryption, quote and payment must share one ME visit")
+        XCTAssertEqual(page.launches,2,"Preparation shares one visit; the receipt is verified after foreground networking")
     }
     @MainActor func testNativePaidDeliveryRecoveryWithoutSecondPayment() async throws {
         try await available()

@@ -30,6 +30,8 @@ import CryptoKit
     private var command: JSON?
     private var issued = false
     private var commandPageID:String?
+    private var networkForeground:CheckedContinuation<Void,Error>?
+    private var networkForegroundTimer:Task<Void,Never>?
     private var response: Result<Any,Error>?
     // A lost HTTP acknowledgement must not turn a saved response into a stale
     // UUID error when the engine has already queued its next wallet method.
@@ -67,7 +69,7 @@ import CryptoKit
     }
     func call(_ method:String,_ args:JSON,raw:Bool = false) async throws -> Any {
         if sessionFinished { closeSession() }
-        guard !starting, continuation == nil else { throw CryptonError("A wallet request is already in progress.") }
+        guard !starting, continuation == nil, networkForeground == nil else { throw CryptonError("A wallet request is already in progress.") }
         let allowed = Set(["isAuthenticated","waitForAuthentication","getPublicKey","encrypt","decrypt","createHmac","verifyHmac","createSignature","verifySignature","createAction","listActions"])
         guard allowed.contains(method) || RecipientDiscovery.methods.contains(method) || (method == "getNetwork" && raw && args.isEmpty) else { throw CryptonError("Unsupported ME wallet request.") }
         let params = RecipientDiscovery.methods.contains(method) ? try RecipientDiscovery.arguments(method,args) : raw ? args : try Wire.walletArguments(method,args)
@@ -95,6 +97,26 @@ import CryptoKit
             if generation == run { finish(.failure(error)) }
             throw error
         }
+    }
+    /// Native URLSession/WebKit work must begin in Crypton, not in a suspended
+    /// client behind ME. Only an idle wallet page may perform this handoff.
+    func prepareForNetwork() async throws {
+        guard !starting, continuation == nil, networkForeground == nil else { throw CryptonError("Finish the wallet request before starting MessageBox networking.") }
+        if foreground() { return }
+        guard session, server != nil, !sessionFinished else { throw CryptonError("Return to Crypton to continue the MessageBox request.") }
+        trace("network.foreground.requested")
+        try await withCheckedThrowingContinuation { (done:CheckedContinuation<Void,Error>) in
+            networkForeground = done
+            networkForegroundTimer = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds:15_000_000_000) } catch { return }
+                self?.finishNetworkForeground(.failure(CryptonError("Return to Crypton to resume MessageBox networking. Your saved payment is unchanged.")))
+            }
+        }
+    }
+    private func finishNetworkForeground(_ result:Result<Void,Error>) {
+        let done = networkForeground; networkForeground = nil
+        networkForegroundTimer?.cancel(); networkForegroundTimer = nil
+        if done != nil { trace("network.foreground.finished"); done?.resume(with:result) }
     }
     private func trace(_ stage:String) {
         // Random operation UUID and fixed stages only; no capability, key or args.
@@ -154,6 +176,7 @@ import CryptoKit
         if foreground() { resumed() }; return true
     }
     func resumed() {
+        if networkForeground != nil, foreground() { finishNetworkForeground(.success(())); return }
         if sessionFinished { closeSession() }
         else if server != nil {
             // A long wallet review can exhaust the previous iOS background
@@ -184,6 +207,7 @@ import CryptoKit
         waiting?(false); done?.resume(with:result)
     }
     private func closeSession() {
+        finishNetworkForeground(.failure(CancellationError()))
         generation = UUID(); starting = false; session = false; sessionFinished = false; operationDepth = 0
         command = nil; response = nil; token = ""; origin = ""; id = ""
         savedResults.removeAll(); savedResultOrder.removeAll(); reopenAfterRecovery = false
@@ -221,7 +245,7 @@ import CryptoKit
                 let samePage = page != nil && page == commandPageID
                 let next = response == nil && (!issued || samePage) ? command : nil
                 if next != nil { trace("command." + method + (issued ? ".recovered" : ".offered")); issued = true; commandPageID = page }
-                return LoopbackResponse(body:try jsonData(["finished":session ? sessionFinished : response != nil,"session":session,"issued":issued,"command":next as Any? ?? NSNull()]))
+                return LoopbackResponse(body:try jsonData(["finished":session ? sessionFinished : response != nil,"session":session,"issued":issued,"foregroundRequired":networkForeground != nil,"command":next as Any? ?? NSNull()]))
             case ("POST","result"):
                 guard request.headers["origin"] == origin, request.headers["content-type"] == "application/json" else { return LoopbackResponse(status:403) }
                 let value = try object(request.body)

@@ -85,9 +85,12 @@ async function poll() {
   try {
     const response = await boundedFetch('next',{cache:'no-store',headers:{'X-Crypton-Page':pageID}});
     if (!response.ok) throw Error();
-    const {command,finished} = await response.json();
-    returnLink.hidden = !(finished && !current);
-    if (finished && !current) {
+    const {command,finished,foregroundRequired} = await response.json();
+    returnLink.hidden = !((finished || foregroundRequired) && !current);
+    if (foregroundRequired && !current) {
+      statusText.textContent = 'Returning to Crypton for MessageBox networking…';
+      returnToApp();
+    } else if (finished && !current) {
       stopped = true;
       statusText.textContent = 'Operation finished. Returning to Crypton…';
       returnToApp();
