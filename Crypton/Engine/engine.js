@@ -53,9 +53,11 @@ function content(text) {
 async function openEnvelope(operation,input) {
       const e = envelope(input);
       const args = {protocolID:[2,'crypton'],keyID:'1',counterparty:e.sender};
+      // A failed/denied identity request is not evidence of a legacy root-key
+      // envelope. Preserve that error instead of requesting broader decryption.
+      const own = await identity(operation); live(operation);
       let text;
       try {
-        const own = await identity(operation); live(operation);
         const {plaintext} = await own.wallet.decrypt({...args,ciphertext:Utils.toArray(e.ciphertext,'base64')});
         text = Utils.toUTF8(plaintext);
       } catch {

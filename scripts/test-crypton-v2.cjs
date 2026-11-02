@@ -62,5 +62,8 @@ async function sealFor(recipient,content) {
   await assert.rejects(run('open',JSON.stringify({...sealed,recipient:bobKey})));
   assert.equal(calls,before,'Invalid public metadata must not reach the wallet');
   denied = true; await assert.rejects(run('identity'));
+  const beforeDeniedOpen=calls;
+  await assert.rejects(run('open', received));
+  assert.equal(calls-beforeDeniedOpen,1,'Denied identity derivation must not request root-key fallback permissions');
   console.log('Crypton v2: identity parity, ephemeral sealing, SDK recipient, derived recipient, self, root fallback, layer, wrong recipient, metadata rejection and denial passed.');
 })().catch(error => {console.error(error);process.exitCode=1;});

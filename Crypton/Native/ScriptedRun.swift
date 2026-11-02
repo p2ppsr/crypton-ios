@@ -12,6 +12,7 @@ import CryptoKit
     private var started = false
     private var attemptedSend = false
     private var sendingAfter = Double.infinity
+    private var announcedPayment = false
     private var task: Task<Void,Never>?
     init?(model:AppModel) {
         let args = ProcessInfo.processInfo.arguments
@@ -23,7 +24,7 @@ import CryptoKit
         guard let bytes = try? Data(contentsOf:request) else { return nil }
         try? FileManager.default.removeItem(at:request)
         guard bytes.count <= 100_000, let value = try? object(bytes), value["run_id"] as? String == id.uuidString.lowercased(),
-              let role = value["role"] as? String, ["preflight","send","receive"].contains(role) else { return nil }
+              let role = value["role"] as? String, ["preflight","send","receive","recover-review"].contains(role) else { return nil }
         self.model = model; self.folder = folder; self.plan = value; self.role = role
     }
     private func event(_ stage:String,_ fields:JSON = [:]) {
@@ -33,7 +34,7 @@ import CryptoKit
         guard var data = try? jsonData(e) else { return }; data.append(10)
         let file = folder.appendingPathComponent("events.jsonl")
         if !FileManager.default.fileExists(atPath:file.path) { FileManager.default.createFile(atPath:file.path,contents:nil) }
-        if let handle = try? FileHandle(forWritingTo:file) { defer { try? handle.close() }; _ = try? handle.seekToEnd(); try? handle.write(contentsOf:data); try? handle.synchronize() }
+        if let handle = try? FileHandle(forWritingTo:file) { defer { try? handle.close() }; _ = try? handle.seekToEnd(); try? handle.write(contentsOf:data); if ["phase_complete","failed"].contains(stage) { try? handle.synchronize() } }
     }
     private func require(_ value:Bool,_ message:String) throws { if !value { throw CryptonError(message) } }
     private func settle() async throws {
@@ -41,6 +42,14 @@ import CryptoKit
         var progress = ""
         while model.busy {
             if model.activity != progress { progress = model.activity; event("progress",["detail":progress]) }
+            if role == "send", attemptedSend, !announcedPayment,
+               let record = try? model.store.get(model.deliveryID), let created = record["created"] as? Double, created >= sendingAfter,
+               ["PAID","SUBMITTING","SENT"].contains(record["state"] as? String ?? ""), record["payment"] is JSON,
+               let prepared = record["prepared"] as? JSON, let messageID = prepared["messageId"] as? String,
+               (try? InboxStore.messageID(messageID)) != nil {
+                announcedPayment = true
+                event("payment_saved",["delivery_id":model.deliveryID,"message_id":messageID,"has_saved_payment":true])
+            }
             if ProcessInfo.processInfo.systemUptime >= deadline {
                 // Do not leave the engine able to reach payment after the CLI has
                 // stopped recording. Cancellation preserves every payment marker.
@@ -56,7 +65,7 @@ import CryptoKit
         if let error = model.error { throw CryptonError(error) }
     }
     private func claimSend() async throws {
-        try require(plan["mode"] as? String != "verify_only","Verification cannot send")
+        try require(plan["mode"] as? String == "send","This mode cannot send")
         guard let address = plan["claim_url"] as? String, let url = URL(string:address), url.host == "127.0.0.1", url.path == "/claim",
               let token = plan["claim_token"] as? String else { throw CryptonError("Missing single-use send claim") }
         var request = URLRequest(url:url); request.httpMethod = "POST"; request.timeoutInterval = 5
@@ -74,6 +83,34 @@ import CryptoKit
                 try require(model.walletMode == (fixture ? "json" : "me"),"The configured wallet mode does not match this run")
                 event("settings_verified")
                 if role == "preflight" { event("preflight_complete"); event("phase_complete"); return }
+                if role == "recover-review" {
+                    try require(plan["mode"] as? String == "recover_review","Recovery mode is required")
+                    guard let id = plan["delivery_id"] as? String, UUID(uuidString:id) != nil,
+                          let sender = plan["sender_identity"] as? String else { throw CryptonError("Missing exact recovery target") }
+                    let record = try model.store.get(id)
+                    try require(record["state"] as? String == "PAYMENT_REQUESTED" &&
+                                (record["walletRefusal"] as? JSON)?["notCommitted"] as? Bool == true &&
+                                (record["prepared"] as? JSON)?["sender"] as? String == sender &&
+                                record["payment"] == nil && record["walletResult"] == nil,
+                                "Recovery requires the exact wallet's definite uncommitted refusal")
+                    model.showDelivery(id)
+                    model.deliver("recover"); try await settle()
+                    let checked = try model.store.get(id)
+                    guard let history = checked["walletHistory"] as? JSON,
+                          history["sender"] as? String == sender,
+                          integer(history["totalActions"]) == 0,
+                          let transactions = history["transactions"] as? [JSON], transactions.isEmpty else {
+                        throw CryptonError("Wallet history did not prove the refused review was unpaid")
+                    }
+                    // The store also checks history freshness and every payment marker.
+                    model.deliver("retryRefused"); try await settle()
+                    let resolved = try model.store.get(id)
+                    try require(resolved["state"] as? String == "DRAFT" &&
+                                (resolved["previousRefusal"] as? JSON)?["notCommitted"] as? Bool == true,
+                                "Refused review remains protected")
+                    event("unpaid_review_recovered",["delivery_id":id,"sender_identity":sender,"total_actions":0,"delivery_state":"DRAFT"])
+                    event("phase_complete"); return
+                }
                 guard let text = plan["message"] as? String else { throw CryptonError("Missing scripted text") }
                 if role == "send" {
                     if fixture { model.choose("self") }
@@ -94,16 +131,18 @@ import CryptoKit
                 guard let id = plan["message_id"] as? String else { throw CryptonError("Missing message ID") }
                 _ = try InboxStore.messageID(id)
                 model.showInbox()
-                var found = false
+                if !fixture, let receivingWallet = plan["wallet_identity"] as? String { model.inboxWallet = try Wire.identity(receivingWallet) }
+                var found = false, more = false
                 for attempt in 0..<10 {
                     event(attempt == 0 ? "refresh_tapped" : "refresh_retry",["attempt":attempt])
-                    model.receive("refresh"); try await settle()
-                    if model.inboxRows.contains(where:{$0["messageId"] as? String == id}) { found = true; break }
-                    try await Task.sleep(nanoseconds:1_000_000_000)
+                    model.inboxID = id; model.receive("verify",more:more); try await settle()
+                    if model.inboxContent != nil { found = true; break }
+                    more = model.inboxMore
+                    if !more { try await Task.sleep(nanoseconds:1_000_000_000) }
                 }
                 try require(found,"The exact message was not present after completed inbox reads")
-                event("received",["message_id":id]); model.showInboxMessage(id)
-                event("decrypt_tapped"); model.receive("open"); try await settle()
+                event("received",["message_id":id]) // The explicit verify action already opened this exact ID.
+                event("verification_completed",["message_id":id])
                 try require(model.inboxContent?["text"] as? String == text,"Decrypted plaintext does not match the original run")
                 event("decrypted",["text_sha256":SHA256.hash(data:Data(text.utf8)).map{String(format:"%02x",$0)}.joined()])
                 model.closeInboxMessage(); model.showInboxMessage(id)

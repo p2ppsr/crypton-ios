@@ -15,6 +15,7 @@ import plistlib
 import re
 import queue
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import signal
 import subprocess
 import sys
@@ -30,6 +31,7 @@ RUNNER = 'com.projectbabbage.CryptonUITests.xctrunner'
 TEST = 'CryptonUITests/CryptonSendRunTests/testDeterministicMessageFlow'
 EVENT = 'CRYPTON_RUN_EVENT '
 FIXTURE_DEVICE = 'Crypton-iOS-Test'
+WALLET_FIELDS = {'review_id','review_age_ms','review_lifetime_ms','stage','outcome','approval','primary_error_name','cleanup_error_name','execution_status','primary_preserved','action_blocked'}
 
 
 def utc():
@@ -97,6 +99,47 @@ def native_status(path, after, kind):
     return next(reversed(operations.values())) if operations else 'waiting'
 
 
+def payment_review_id(visible, wallet_events, sender_device):
+    if not visible: return None
+    if visible.get('review_id'): return visible['review_id']
+    stamp = lambda e: datetime.fromisoformat(e['utc'].replace('Z', '+00:00')).timestamp()
+    # Older spending-modal diagnostics omit the ID. Bind only to one review
+    # opened immediately before that modal on the same sender, never any approval.
+    matches = [e.get('params',{}).get('review_id') for e in wallet_events
+               if e.get('stage') == 'wallet_payment_review_opened' and e.get('device') == sender_device
+               and 0 <= stamp(visible)-stamp(e) <= 1]
+    return matches[0] if len(matches) == 1 and matches[0] else None
+
+
+def target_timing(events, wallet_events, fixture=False, sender_device=None):
+    """Cross-device UTC boundaries; deduct only an evidenced visible Pay wait."""
+    def first(stage, role):
+        return next((e for e in events if e.get('stage') == stage and e.get('role') == role), None)
+    launch, verified = first('launch_requested', 'send'), first('retained', 'receive')
+    accepted = first('accepted','send')
+    report = {'target_ms': 20000, 'verification': 'exact_plaintext_and_retained_copy',
+              'fixture': fixture, 'status': 'unavailable'}
+    if not launch or not verified: return {**report, 'reason': 'Missing launch or recipient-verification boundary'}
+    def stamp(e): return datetime.fromisoformat(e['utc'].replace('Z', '+00:00')).timestamp()
+    if accepted and stamp(accepted) > stamp(verified): verified=accepted
+    total = (stamp(verified) - stamp(launch)) * 1000
+    wait = 0
+    if not fixture:
+        visible = first('pay_visible', 'send')
+        review_id = payment_review_id(visible,wallet_events,sender_device)
+        approved = next((e for e in wallet_events if e.get('stage') == 'wallet_payment_review_approved'
+                         and visible and review_id and e.get('device') == sender_device
+                         and e.get('params',{}).get('review_id') == review_id
+                         and stamp(e) >= stamp(visible)), None)
+        if not visible or not approved: return {**report, 'reason': 'Missing evidenced Pay-visible/approval interval', 'total_ms': round(total, 1)}
+        wait = (stamp(approved) - stamp(visible)) * 1000
+    if not 0 <= wait <= total: return {**report, 'reason': 'Invalid clock ordering'}
+    adjusted = total - wait
+    return {**report, 'status': 'measured', 'launch_utc': launch['utc'], 'verified_utc': verified['utc'],
+            'total_ms': round(total, 1), 'pay_wait_ms': round(wait, 1), 'adjusted_ms': round(adjusted, 1),
+            'met': adjusted <= 20000 and accepted is not None, 'sender_receipt': 'confirmed' if accepted else 'unconfirmed'}
+
+
 class Run:
     def __init__(self, args, profiles):
         self.args, self.profiles = args, profiles
@@ -121,6 +164,11 @@ class Run:
         self.claim_server = None
         self.process = None
         self.review_prompted = False
+        self.wallet_roots = {}
+        self.live_wallet_events = {}
+        self.receive_pool = None
+        self.receive_future = None
+        self.stop_phases = threading.Event()
         self.state = {'status': 'preparing', 'started_at': now, 'run_id': self.plan['run_id'], 'fixture': args.fixture,
                       'sender': profiles[0]['device'], 'receiver': profiles[1]['device'],
                       'text_sha256': hashlib.sha256(self.plan['message'].encode()).hexdigest(), 'folder': str(self.folder)}
@@ -136,7 +184,7 @@ class Run:
     def start_claim_server(self):
         owner = self
         token = secrets.token_urlsafe(32)
-        may_send = not getattr(getattr(self,'args',None),'verify_run',None)
+        may_send = not (getattr(getattr(self,'args',None),'verify_run',None) or getattr(getattr(self,'args',None),'recovery_only',False))
         class Claim(BaseHTTPRequestHandler):
             def log_message(self, *_args): pass
             def do_POST(self):
@@ -195,6 +243,11 @@ class Run:
 
     def event(self, e):
         if e.get('run_id') != self.plan['run_id']: raise RuntimeError('Unexpected run identity in UI events')
+        with self.state_lock:
+            self._event(e)
+
+    def _event(self, e):
+        if e.get('run_id') != self.plan['run_id']: raise RuntimeError('Unexpected run identity in UI events')
         self.events.append(e)
         with (self.folder / 'events.jsonl').open('a') as f: f.write(json.dumps(e) + '\n')
         stage = e['stage']
@@ -213,6 +266,13 @@ class Run:
                 and re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', str(e.get('delivery_id', '')))):
             self.state.update(verify_unconfirmed_submission=True, delivery_id=e['delivery_id'],
                               message_id=e['message_id'], sender_receipt='unconfirmed')
+        if (stage == 'payment_saved' and self.state.get('status') == 'sending' and e.get('role') == 'send' and e.get('has_saved_payment') is True
+                and re.fullmatch(r'[a-f0-9]{64}', str(e.get('message_id','')))
+                and re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', str(e.get('delivery_id','')))):
+            self.state.update(message_id=e['message_id'],delivery_id=e['delivery_id'])
+            if (getattr(self,'receive_pool',None) is not None and self.receive_future is None
+                    and self.profiles[0]['device'] != self.profiles[1]['device']):
+                self.receive_future=self.receive_pool.submit(self.phase,None,'receive',self.profiles[1])
         if stage == 'send_tapped':
             self.state['status'] = 'sending'
         if stage == 'pay_visible' or (stage == 'progress' and 'approve payment' in e.get('detail','').lower()):
@@ -221,26 +281,40 @@ class Run:
                 command(['open','-a',str(Path(os.environ['DEVELOPER_DIR'])/'Applications/Simulator.app') if 'DEVELOPER_DIR' in os.environ else 'Simulator','--args','-CurrentDeviceUDID',self.profiles[0]['device']])
                 print('HUMAN ACTION ('+self.profiles[0].get('name',self.profiles[0]['device'])+'): review the final total and click Pay once in ME. Leave Allow up to unchanged.\n'
                       'Composed: '+self.plan['composed_at']+'; run: '+self.plan['run_id'],flush=True)
-        if stage == 'accepted': self.state.update(status='accepted', message_id=e['message_id'])
-        if stage == 'retained': self.state['status'] = 'complete'
+        if stage == 'accepted':
+            if self.state.get('message_id') and self.state['message_id'] != e['message_id']: raise RuntimeError('Acceptance changed the saved message ID')
+            self.state.update(status='complete' if self.state.get('recipient_retained') else 'accepted',
+                              sender_status='accepted',sender_receipt='confirmed',message_id=e['message_id'])
+        if stage == 'retained':
+            self.state['recipient_retained']=True
+            if self.state.get('sender_status') == 'accepted' or self.state.get('sender_receipt') == 'unconfirmed' or getattr(getattr(self,'args',None),'verify_run',None):
+                self.state['status']='complete'
         self.save()
 
     def send_and_verify(self, template):
         self.phase(template, 'preflight', self.profiles[1])
+        self.receive_pool=ThreadPoolExecutor(max_workers=1)
         try:
-            self.phase(template, 'send', self.profiles[0])
-        except Exception as error:
-            # A validated, settled native SUBMITTING record supplies the exact
-            # message ID and saved-payment proof. Continue with READS only.
-            if not self.state.pop('verify_unconfirmed_submission', False): raise
-            self.state.update(status='needs_recovery', sender_error=str(error), sender_receipt='unconfirmed')
-            self.save()
-            print('Sender receipt missing; checking the exact paid message on the recipient. No resend/payment.\n'
-                  'Composed: '+self.plan['composed_at']+'; run: '+self.plan['run_id'], flush=True)
-        self.phase(template, 'receive', self.profiles[1])
-        if self.state.get('sender_receipt') == 'unconfirmed':
-            self.state['status'] = 'recipient_verified'
-            self.save()
+            try:
+                self.phase(template, 'send', self.profiles[0])
+            except Exception as error:
+                # Only reads overlap the already-durable payment/submission.
+                if not self.state.pop('verify_unconfirmed_submission', False): raise
+                with self.state_lock:
+                    self.state.update(status='needs_recovery',sender_error=str(error),sender_receipt='unconfirmed')
+                    self.save()
+                print('Sender receipt missing; checking the exact paid message on the recipient. No resend/payment.\n'
+                      'Composed: '+self.plan['composed_at']+'; run: '+self.plan['run_id'],flush=True)
+            if self.receive_future is not None:
+                self.receive_future.result(timeout=self.args.timeout+35)
+            else:
+                self.phase(template,'receive',self.profiles[1])
+            if self.state.get('sender_receipt') == 'unconfirmed':
+                self.state['status']='recipient_verified';self.save()
+        finally:
+            self.stop_phases.set()
+            self.receive_pool.shutdown(wait=True,cancel_futures=True)
+            self.receive_pool=None
 
     # Historical UI executor, retained for regression tests only. The CLI uses phase() below.
     def phase_xctest(self, template, role, profile):
@@ -281,6 +355,8 @@ class Run:
     def phase(self, template, role, profile):
         if getattr(self.args,'verify_run',None) and role != 'receive':
             raise RuntimeError('Verification mode cannot enter a sending phase')
+        if getattr(self.args,'recovery_only',False) and role != 'recover-review':
+            raise RuntimeError('Review recovery cannot enter another phase')
         root = Path(subprocess.check_output(['xcrun','simctl','get_app_container',profile['device'],APP,'data'],text=True).strip())
         folder = root/'Library/Application Support/ScriptedRuns'/self.plan['run_id']
         folder.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -295,8 +371,10 @@ class Run:
         launch += ['--crypton-script',self.plan['run_id']]
         offset = 0; pay_seen = False; deadline = time.monotonic()+self.args.timeout+30
         try:
+            self.event({'run_id':self.plan['run_id'],'role':role,'stage':'launch_requested','utc':utc(), 'elapsed_ms':0})
             sim(*launch,stdout=subprocess.DEVNULL)
             while time.monotonic()<deadline:
+                if self.stop_phases.is_set(): raise RuntimeError('Recorded phase stopped')
                 with events_path.open() as f:
                     f.seek(offset)
                     while True:
@@ -306,30 +384,37 @@ class Run:
                         self.event(event)
                         if event['stage']=='failed':raise RuntimeError(event.get('reason','Native script failed'))
                         if event['stage']=='phase_complete':
-                            expected={'preflight':'preflight_complete','send':'accepted','receive':'retained'}[role]
+                            expected={'preflight':'preflight_complete','send':'accepted','receive':'retained','recover-review':'unpaid_review_recovered'}[role]
                             if not any(e['role']==role and e['stage']==expected for e in self.events):raise RuntimeError('Missing '+expected+' evidence')
                             return
                     offset=f.tell()
-                if role=='send' and not self.args.fixture and not pay_seen:
-                    pay_seen=self.observe_payment(profile)
+                if role=='send' and not self.args.fixture:
+                    pay_seen=self.observe_payment(profile, report=not pay_seen) or pay_seen
                 time.sleep(.1)
             raise RuntimeError(role+' exceeded its native phase deadline; inspect the saved outcome')
         finally:
             (folder/'request.json').unlink(missing_ok=True)
             (folder/'request.tmp').unlink(missing_ok=True)
 
-    def observe_payment(self, profile):
+    def observe_payment(self, profile, report=True):
         try:
-            root=Path(subprocess.check_output(['xcrun','simctl','get_app_container',profile['device'],'app.metanet.explorer','data'],text=True).strip())/'Library/Application Support/app.metanet.explorer/RCTAsyncLocalStorage_V1'
+            if profile['device'] not in self.wallet_roots:
+                self.wallet_roots[profile['device']]=Path(subprocess.check_output(['xcrun','simctl','get_app_container',profile['device'],'app.metanet.explorer','data'],text=True).strip())/'Library/Application Support/app.metanet.explorer/RCTAsyncLocalStorage_V1'
+            root=self.wallet_roots[profile['device']]
             key='metanet.diagnostics.events.v1'; manifest=json.loads((root/'manifest.json').read_text());raw=manifest.get(key)
             if raw is None:raw=(root/hashlib.md5(key.encode()).hexdigest()).read_text()
             data=json.loads(raw)
+            for e in data:
+                if e.get('at','') >= self.state['started_at'] and e.get('name','').startswith('wallet_payment_'):
+                    value={'device':profile['device'],'utc':e['at'],'stage':e['name'],'params':{k:v for k,v in e.get('params',{}).items() if k in WALLET_FIELDS}}
+                    self.live_wallet_events[(profile['device'],e['at'],e['name'])]=value
+            write(self.folder/'wallet-review-events.json',list(self.live_wallet_events.values()))
             visible=next((e for e in data if e.get('at','')>=self.state['started_at'] and e.get('name')=='wallet_permission_spending_modal_visible' and 'crypton' in e.get('params',{}).get('originator','').lower()),None)
-            if visible:
+            if visible and report:
                 started=next(e for e in self.events if e['role']=='send' and e['stage']=='started')
                 elapsed=(datetime.fromisoformat(visible['at'])-datetime.fromisoformat(started['utc'])).total_seconds()*1000
                 self.event({'run_id':self.plan['run_id'],'role':'send','stage':'pay_visible','utc':visible['at'],'elapsed_ms':elapsed,
-                            'label':'Pay '+str(visible['params']['spending_amount'])+' sats','source':'ME spending-modal diagnostic'})
+                            'label':'Pay '+str(visible['params']['spending_amount'])+' sats','review_id':visible.get('params',{}).get('review_id'),'source':'ME spending-modal diagnostic'})
                 return True
         except (OSError,ValueError,KeyError,StopIteration,subprocess.CalledProcessError):pass
         return False
@@ -366,9 +451,9 @@ class Run:
         write(self.folder / 'timings.json', timings)
         # Exact ME review events supplement the UI's sampled timestamps. Never
         # enable diagnostics or export keys, payloads, transaction data or origins.
-        wallet_events = []
+        wallet_events = list(self.live_wallet_events.values())
         if not self.args.fixture:
-            fields = {'review_id','review_age_ms','review_lifetime_ms','stage','outcome','approval','primary_error_name','cleanup_error_name','execution_status','primary_preserved','action_blocked'}
+            fields = WALLET_FIELDS
             for profile in self.profiles:
                 try:
                     root = Path(subprocess.check_output(['xcrun','simctl','get_app_container',profile['device'],'app.metanet.explorer','data'],text=True).strip())
@@ -380,7 +465,13 @@ class Run:
                         for e in json.loads(raw) if self.state['started_at'] <= e.get('at','') <= self.state['finished_at'] and e.get('name','').startswith('wallet_payment_'))
                 except Exception:
                     self.state.setdefault('wallet_diagnostics_unavailable',[]).append(profile['device'])
+            wallet_events=list({(e['device'],e['utc'],e['stage']):e for e in wallet_events}.values())
             write(self.folder/'wallet-review-events.json',wallet_events); self.save()
+        target = target_timing(self.events, wallet_events, self.args.fixture, self.profiles[0]['device'])
+        write(self.folder/'target-timing.json', target)
+        self.state['target_timing'] = target; self.save()
+        if target['status'] == 'measured':
+            print('Launch → verified, excluding Pay click wait: '+str(target['adjusted_ms'])+' ms; target 20000 ms; '+('MET' if target['met'] else 'NOT MET')+(' (disposable fixture)' if self.args.fixture else ''), flush=True)
         rows = ['Crypton single-command run', 'Run: ' + self.plan['run_id'], 'Composed (UTC): ' + self.plan['composed_at'], 'Result: ' + self.state['status'],
                 '', 'UI-observed intervals (sampled completion timestamps; not pure network time):']
         rows += [t['from'] + ' -> ' + t['to'] + ': ' + str(t['milliseconds']) + ' ms' for t in timings]

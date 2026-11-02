@@ -5,6 +5,27 @@ import AVFoundation
 final class CryptonTests: XCTestCase {
     let key = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     func envelope() throws -> String { try jsonString(["protocol":"crypton","version":2,"sender":key,"ciphertext":Data(repeating:4,count:48).base64EncodedString()]) }
+    @MainActor func testExactVerificationRequiresTargetedJournalBeforeCryptography() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let store = InboxStore(delivery:DeliveryStore(directory:directory.appendingPathComponent("delivery")),directory:directory.appendingPathComponent("inbox"))
+        let id = String(repeating:"a",count:64)
+        let session = try InboxSession(store:store,action:"verify",wallet:key,id:id,offset:0,layer:"")
+        try session.returned("getPublicKey",["identityKey":true],["publicKey":key])
+        XCTAssertThrowsError(try session.beforeCrypto("createHmac",[:]),"No decryption before an exact-ID page checkpoint")
+        let encrypted = try envelope()
+        let row:JSON = ["messageId":id,"sender":key,"envelope":encrypted]
+        var other = row; other["messageId"] = String(repeating:"b",count:64)
+        XCTAssertThrowsError(try session.checkpoint("page",["wallet":key,"messages":[other]]))
+        XCTAssertThrowsError(try session.checkpoint("page",["wallet":key,"messages":[row,row]]))
+        try session.checkpoint("page",["wallet":key,"messages":[row]])
+        let args:JSON = ["protocolID":[2,"crypton"],"keyID":"1","counterparty":key,"ciphertext":try Wire.envelope(encrypted)["ciphertext"]!]
+        XCTAssertNoThrow(try session.beforeCrypto("decrypt",args))
+        var changed = args; changed["ciphertext"] = "changed"
+        XCTAssertThrowsError(try session.beforeCrypto("decrypt",changed))
+        XCTAssertThrowsError(try session.beforeWallet("createAction",[:]))
+        XCTAssertThrowsError(try session.beforeHTTP(URL(string:store.host+"/acknowledgeMessage")!,"POST",try jsonString(["messageIds":[id]])))
+    }
     @MainActor func testUnpaidProofRejectsEveryPaymentMarkerAndUnknownState() {
         for state in ["DRAFT","QUOTED"] {
             XCTAssertTrue(DeliveryStore.paymentNeverRequested(["state":state]))

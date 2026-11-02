@@ -67,7 +67,7 @@ window.runInbox=async request=>{
       }
     } else if(request.action==='remove') {
       await removeInboxMessage(operation,request,w,checkRoot);result={wallet:root,removed:true};
-    } else if(request.action==='refresh') {
+    } else if(['refresh','find','verify'].includes(request.action)) {
       if((await w.getNetwork({})).network!=='mainnet')throw Error('Switch ME to mainnet to read this MessageBox inbox.');
       const client=authClient(operation,w);
       const response=await client.fetch(request.host+'/listMessages',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -79,6 +79,9 @@ window.runInbox=async request=>{
       const messages=[];let skipped=0;
       for(const m of data.messages) {
         live(operation);
+        // Exact-ID verification should not ask the wallet to decrypt unrelated
+        // historical messages. Pagination and all authenticated checks remain.
+        if(['find','verify'].includes(request.action) && m.messageId!==request.messageId)continue;
         try {
           if(typeof m.messageId!=='string'||!/^[A-Za-z0-9_-]{1,160}$/.test(m.messageId)||typeof m.sender!=='string'||!PublicKey.fromString(m.sender).validate())throw Error('Invalid message metadata.');
           const body=inboxBody(m.body);
@@ -104,6 +107,10 @@ window.runInbox=async request=>{
       }
       await deliveryRpc(operation,'checkpoint',{kind:'page',value:{wallet:root,messages}});
       result={wallet:root,count:messages.length,skipped,hasMore:data.hasMore===true,nextOffset:next};
+      if(request.action==='verify' && messages.length===1) {
+        const opened=await openEnvelope(operation,messages[0].envelope);await checkRoot();
+        result.content=opened;result.messageId=request.messageId;
+      }
     } else throw Error('Unsupported inbox request.');
     live(operation);active=null;post({event:'result',id:operation,result});
   }catch(error){if(active===operation){active=null;post({event:'error',id:operation,message:error.message||'Could not read the inbox. Your saved messages were kept.'});}}

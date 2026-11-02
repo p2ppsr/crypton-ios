@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const load=require('node:module').createRequire(path.resolve(process.argv[2],'package.json'));
 const {ProtoWallet,PrivateKey,Utils}=load('@bsv/sdk');
 const reader=new ProtoWallet(PrivateKey.fromRandom()),sender=new ProtoWallet(PrivateKey.fromRandom());
-let ackMode='normal',acks=0;const pendingRemoval=new Set();
+let ackMode='normal',acks=0,transportDecrypts=0;const pendingRemoval=new Set();
 let completed,sandbox,rows=[],saved=[],agent,root,failNetwork=false,badAgent=false,changeProfile=false,identities=0,decryptDenied=false;
 async function bridge(raw){
  const e=JSON.parse(raw);if(e.event==='ready')return;
@@ -14,7 +14,7 @@ async function bridge(raw){
    assert.ok(['getPublicKey','getNetwork','decrypt'].includes(e.call),'Inbox must not spend or accept payments');
    if(e.call==='getNetwork')result={network:'mainnet'};
    else if(e.call==='getPublicKey'){identities++;result={publicKey:changeProfile&&identities>1?agent:root};}
-   else {if(decryptDenied)throw Error('ME declined feature permission');result=await reader.decrypt(e.args);}
+   else {transportDecrypts++;if(decryptDenied)throw Error('ME declined feature permission');result=await reader.decrypt(e.args);}
   }else if(e.event==='wallet'){
    assert.ok(['createHmac','decrypt'].includes(e.call));const args={...e.args};
    if(args.data)args.data=Utils.toArray(args.data,'base64');if(args.ciphertext)args.ciphertext=Utils.toArray(args.ciphertext,'base64');
@@ -60,6 +60,12 @@ function run(action='refresh',envelope){identities=0;return new Promise((resolve
  rows=[{messageId:'a'.repeat(64),sender:agent,body:JSON.stringify({message:JSON.stringify({encryptedMessage:Utils.toBase64(outer.ciphertext)}),payment:{neverImport:true}})}];
  const received=rows[0];
  assert.equal((await run()).count,1);assert.equal(saved[0].envelope,envelope);assert.equal((await run('open',envelope)).content.text,'Receiving works');
+ const beforeFind=transportDecrypts;
+ rows=[...Array.from({length:20},(_,i)=>({...received,messageId:String(i).padStart(64,'0')})),received];
+ assert.equal((await run('find')).count,1);
+ assert.equal(transportDecrypts-beforeFind,1,'Exact-ID lookup must avoid every unrelated wallet decryption');
+ assert.equal((await run('verify')).content.text,'Receiving works');
+ rows=[received];
  const kept=JSON.stringify(saved);failNetwork=true;await assert.rejects(run(),/offline/);failNetwork=false;assert.equal(JSON.stringify(saved),kept);
  badAgent=true;await assert.rejects(run(),/identity changed/);badAgent=false;assert.equal(JSON.stringify(saved),kept);
  changeProfile=true;await assert.rejects(run(),/profile changed/);changeProfile=false;assert.equal(JSON.stringify(saved),kept);

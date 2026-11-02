@@ -15,6 +15,31 @@ spec = importlib.util.spec_from_file_location('send_command', Path(__file__).wit
 send = importlib.util.module_from_spec(spec); spec.loader.exec_module(send)
 
 class Contract(unittest.TestCase):
+    def test_target_includes_launch_and_receiver_and_excludes_only_exact_pay_wait(self):
+        def event(stage,role,seconds,**extra):
+            return {'stage':stage,'role':role,'utc':f'2026-11-02T00:00:{seconds:02d}.000Z',**extra}
+        events=[event('launch_requested','send',0),event('send_tapped','send',2),
+                event('pay_visible','send',8,review_id='own'),event('accepted','send',19),event('retained','receive',24)]
+        wallet=[event('wallet_payment_review_approved','send',9,device='peer',params={'review_id':'own'}),
+                event('wallet_payment_review_approved','send',10,device='sender',params={'review_id':'other'}),
+                event('wallet_payment_review_approved','send',14,device='sender',params={'review_id':'own'})]
+        result=send.target_timing(events,wallet,sender_device='sender')
+        self.assertEqual(result['total_ms'],24000);self.assertEqual(result['pay_wait_ms'],6000)
+        self.assertEqual(result['adjusted_ms'],18000);self.assertTrue(result['met'])
+        self.assertEqual(send.target_timing(events,[],sender_device='sender')['status'],'unavailable')
+        self.assertEqual(send.target_timing(events[:-1],wallet,sender_device='sender')['status'],'unavailable')
+        self.assertFalse(send.target_timing(events,[],fixture=True)['met'],'Fixture costs cannot be hidden as human wait')
+        events[2]['review_id']=None
+        self.assertEqual(send.target_timing(events,wallet,sender_device='sender')['status'],'unavailable','Unbound approval cannot become deducted wait')
+        opened=event('wallet_payment_review_opened','send',8,device='sender',params={'review_id':'own'})
+        self.assertEqual(send.target_timing(events,[opened,*wallet],sender_device='sender')['adjusted_ms'],18000)
+        self.assertEqual(send.target_timing(events,[opened,opened,*wallet],sender_device='sender')['status'],'unavailable','Ambiguous opened reviews cannot bind a modal')
+        events[2]['review_id']='own'
+        events[3]['utc']='2026-11-02T00:00:30.000Z'
+        late=send.target_timing(events,wallet,sender_device='sender')
+        self.assertEqual(late['total_ms'],30000);self.assertFalse(late['met'],'Parallel receipt work must finish inside the target too')
+        unconfirmed=send.target_timing([e for e in events if e['stage']!='accepted'],wallet,sender_device='sender')
+        self.assertEqual(unconfirmed['adjusted_ms'],18000);self.assertFalse(unconfirmed['met'],'Missing sender receipt cannot satisfy the target')
     def test_message_and_reports_share_one_run_marker_and_composition_time(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
@@ -64,6 +89,22 @@ class Contract(unittest.TestCase):
                 self.assertEqual(error.exception.code,403);error.exception.close()
                 self.assertFalse((run.folder/'send-claimed').exists())
                 self.assertEqual(run.state['status'],'verifying')
+            finally:run.claim_server.shutdown();run.claim_server.server_close()
+    def test_review_recovery_has_no_send_claim_or_other_phase(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='',fixture=False,timeout=60,recovery_only=True),[{'device':'sender'},{'device':'receiver'}])
+            run.state['mode']='recover_review'
+            run.start_claim_server()
+            try:
+                self.assertNotIn('claim_token',run.plan)
+                req=urllib.request.Request(run.plan['watch_url'].replace('/watch','/claim'),data=b'',method='POST',headers={'Authorization':'Bearer '+run.plan['watch_token'],'X-Crypton-Run':run.plan['run_id']})
+                with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(req,timeout=3)
+                self.assertEqual(error.exception.code,403);error.exception.close()
+                with patch.object(send.subprocess,'check_output') as process:
+                    for role in ['preflight','send','receive']:
+                        with self.assertRaisesRegex(RuntimeError,'cannot enter another phase'):run.phase(None,role,run.profiles[0])
+                    process.assert_not_called()
             finally:run.claim_server.shutdown();run.claim_server.server_close()
     def test_xctestrun_preserves_literal_text_and_selects_only_opt_in_test(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -180,6 +221,43 @@ class Contract(unittest.TestCase):
             with patch.object(run,'phase',side_effect=phase):
                 with self.assertRaisesRegex(RuntimeError,'No submission evidence'):run.send_and_verify(None)
             self.assertEqual(phases,['preflight','send'])
+    def test_recipient_reads_overlap_only_after_payment_and_completion_waits_for_sender(self):
+        import threading
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='Parallel paid test',fixture=False,timeout=30),[{'device':'sender'},{'device':'peer'}])
+            seen=threading.Event();phases=[]
+            def event(stage,role,**fields):run.event({'run_id':run.plan['run_id'],'utc':'now','stage':stage,'role':role,**fields})
+            def phase(template,role,profile):
+                phases.append(role)
+                if role=='send':
+                    run.state['status']='sending'
+                    self.assertFalse(seen.is_set())
+                    event('payment_saved','send',has_saved_payment=True,message_id='d'*64,delivery_id='43054422-2771-4052-a058-af93cc9c0314')
+                    self.assertTrue(seen.wait(2),'Recipient must start while submission is still pending')
+                    self.assertEqual(run.state['status'],'sending','Recipient cannot manufacture a sender receipt')
+                    event('accepted','send',message_id='d'*64)
+                elif role=='receive':
+                    self.assertEqual(run.state['message_id'],'d'*64)
+                    event('retained','receive',message_id='d'*64);seen.set()
+            with patch.object(run,'phase',side_effect=phase):run.send_and_verify(None)
+            self.assertEqual(phases,['preflight','send','receive'])
+            self.assertEqual(run.state['status'],'complete');self.assertEqual(run.state['sender_receipt'],'confirmed')
+    def test_single_device_fixture_never_launches_receiver_over_its_sender(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder,patch.object(send,'ARTIFACTS',Path(folder)):
+            run=send.Run(types.SimpleNamespace(text='One device',fixture=True,timeout=30),[{'device':'same'},{'device':'same'}])
+            phases=[]
+            def phase(template,role,profile):
+                phases.append(role)
+                if role=='send':
+                    run.state['status']='sending'
+                    run.event({'run_id':run.plan['run_id'],'utc':'now','role':'send','stage':'payment_saved','has_saved_payment':True,'message_id':'e'*64,'delivery_id':'43054422-2771-4052-a058-af93cc9c0314'})
+                    self.assertIsNone(run.receive_future)
+                    run.event({'run_id':run.plan['run_id'],'utc':'now','role':'send','stage':'accepted','message_id':'e'*64})
+                elif role=='receive':run.state['status']='complete'
+            with patch.object(run,'phase',side_effect=phase):run.send_and_verify(None)
+            self.assertEqual(phases,['preflight','send','receive'])
     def test_pre_send_failure_without_a_claim_does_not_block_a_new_run(self):
         import threading
         with tempfile.TemporaryDirectory() as folder:

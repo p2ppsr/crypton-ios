@@ -4,6 +4,11 @@ const sent = new Set(), received = new Set();
 const allowed = new Set(['isAuthenticated','waitForAuthentication','getPublicKey','getNetwork','encrypt','decrypt','createHmac','verifyHmac','createSignature','verifySignature','createAction','listActions','discoverByAttributes','discoverByIdentityKey']);
 let current = null, stopped = false, returning = false, saving = false, returnAttempts = 0, pendingResponse = null;
 const pageID = crypto.randomUUID();
+let pollTimer = null, polling = false;
+function queuePoll(delay=50) {
+  if(pollTimer!==null)clearTimeout(pollTimer);
+  pollTimer=setTimeout(()=>{pollTimer=null;void poll();},delay);
+}
 const visible = () => !document.hidden;
 function returnToApp() {
   if (!visible() || (current && !saving && !pendingResponse) || returning || returnAttempts >= 8) return;
@@ -57,7 +62,8 @@ async function saveResponse() {
       if (!saved.ok) throw Error();
       if (current === requestID) current = null;
       pendingResponse = null; saving = false;
-      if (stopped) { stopped = false; void poll(); }
+      if (stopped) stopped = false;
+      queuePoll(0); // Acknowledgement is an immediate signal to retrieve the next command.
       return;
     } catch {
       statusText.textContent = 'Approval finished. Returning to Crypton to save the result…';
@@ -78,10 +84,11 @@ const labels = {
   createSignature:'Authenticating with MessageBox…', verifySignature:'Verifying MessageBox authentication…'
 };
 async function poll() {
-  if (stopped) return;
+  if (stopped || polling) return;
   // The native server reserves each command for its owning page. Dispatch it
   // once and await the result acknowledgement before retrieving another command.
-  if (current || saving || returning || !visible()) { setTimeout(poll,150); return; }
+  if (current || saving || returning || !visible()) { queuePoll(); return; }
+  polling=true;
   try {
     const response = await boundedFetch('next',{cache:'no-store',headers:{'X-Crypton-Page':pageID}});
     if (!response.ok) throw Error();
@@ -113,6 +120,7 @@ async function poll() {
     // and retrieve it with the SAME page identity; a return races wallet dispatch.
     if (!current) statusText.textContent='Reconnecting to Crypton’s local wallet bridge…';
   }
-  if (!stopped) setTimeout(poll,150);
+  polling=false;
+  if (!stopped) queuePoll();
 }
 poll();

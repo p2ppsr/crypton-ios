@@ -87,15 +87,15 @@ import CryptoKit
     let expectedWallet:String
     let messageID:String
     let offset:Int
-    let envelope:String
+    private(set) var envelope:String
     private(set) var wallet = ""
     private var decrypted = false, verificationRequested = false
     init(store:InboxStore,action:String,wallet:String,id:String,offset:Int,layer:String) throws {
-        guard ["refresh","open","openDiscard","remove","layer"].contains(action), (0...1_000_000).contains(offset) else { throw CryptonError("Invalid inbox operation.") }
+        guard ["refresh","find","verify","open","openDiscard","remove","layer"].contains(action), (0...1_000_000).contains(offset) else { throw CryptonError("Invalid inbox operation.") }
         self.store = store; self.action = action; self.offset = offset
         expectedWallet = wallet.isEmpty ? "" : try Wire.identity(wallet)
         messageID = ["refresh","layer"].contains(action) ? "" : try InboxStore.messageID(id)
-        if action != "refresh", wallet.isEmpty { throw CryptonError("Select the receiving wallet first.") }
+        if !["refresh","find","verify"].contains(action), wallet.isEmpty { throw CryptonError("Select the receiving wallet first.") }
         if ["open","openDiscard"].contains(action) {
             let r = try store.get(wallet,id); guard !InboxStore.pending(r) else { throw CryptonError("Server removal is pending; the message copy is gone.") }
             envelope = r["envelope"] as! String
@@ -112,7 +112,7 @@ import CryptoKit
         switch method {
         case "createHmac","verifyHmac": allowed = sameJSON(proto,[2,"server hmac"]) && peer == "self"
         case "createSignature","verifySignature": allowed = sameJSON(proto,[2,"auth message signature"]) && peer == store.agent
-        case "decrypt": allowed = action == "refresh" && sameJSON(proto,[1,"messagebox"]) && args["keyID"] as? String == "1" && (try? Wire.identity(peer)) != nil
+        case "decrypt": allowed = ["refresh","find","verify"].contains(action) && sameJSON(proto,[1,"messagebox"]) && args["keyID"] as? String == "1" && (try? Wire.identity(peer)) != nil
         default: allowed = false
         }
         guard allowed else { throw CryptonError("This inbox operation cannot use that wallet feature or make a payment.") }
@@ -124,7 +124,7 @@ import CryptoKit
         }
     }
     func beforeCrypto(_ method:String,_ args:JSON) throws {
-        guard ["open","openDiscard","layer"].contains(action), !wallet.isEmpty else { throw CryptonError("Unexpected inbox decryption request.") }
+        guard ["open","openDiscard","layer","verify"].contains(action), !wallet.isEmpty, !envelope.isEmpty else { throw CryptonError("Unexpected inbox decryption request.") }
         if method == "decrypt" {
             let e = try Wire.envelope(envelope)
             guard sameJSON(args["ciphertext"],e["ciphertext"]), sameJSON(args["counterparty"],e["sender"]) else { throw CryptonError("Inbox decryption changed its envelope.") }
@@ -133,18 +133,23 @@ import CryptoKit
     func beforeHTTP(_ url:URL,_ method:String,_ body:String) throws {
         let base = URL(string:store.host)!
         guard !wallet.isEmpty, url.scheme == base.scheme, url.host == base.host, url.port == base.port, url.user == nil, url.password == nil, url.fragment == nil, url.query == nil, method == "POST" else { throw CryptonError("Inbox request left its trusted host.") }
-        if ["refresh","openDiscard","remove"].contains(action), url.path == "/.well-known/auth" { return }
+        if ["refresh","find","verify","openDiscard","remove"].contains(action), url.path == "/.well-known/auth" { return }
         let request = try object(Data(body.utf8))
         if ["openDiscard","remove"].contains(action), InboxStore.pending(try store.get(wallet,messageID)) {
             if url.path == "/acknowledgeMessage", sameJSON(request,["messageIds":[messageID]]) { return }
             if url.path == "/listMessages", sameJSON(request,["messageBox":"notifications","offset":0,"limit":25,"messageId":messageID]) { verificationRequested = true; return }
         }
-        if action == "refresh", url.path == "/listMessages", sameJSON(request,["messageBox":"notifications","offset":offset,"limit":25]) { return }
+        if ["refresh","find","verify"].contains(action), url.path == "/listMessages", sameJSON(request,["messageBox":"notifications","offset":offset,"limit":25]) { return }
         throw CryptonError("This inbox operation cannot use that endpoint or accept payments.")
     }
     func checkpoint(_ kind:String,_ value:JSON) throws {
         guard !wallet.isEmpty, value["wallet"] as? String == wallet else { throw CryptonError("Invalid inbox checkpoint.") }
-        if kind == "page", action == "refresh", let rows = value["messages"] as? [JSON] { try store.merge(wallet,rows); return }
+        if kind == "page", ["refresh","find","verify"].contains(action), let rows = value["messages"] as? [JSON] {
+            if ["find","verify"].contains(action), rows.count > 1 || rows.contains(where: { $0["messageId"] as? String != messageID }) { throw CryptonError("Targeted inbox lookup changed its message ID.") }
+            try store.merge(wallet,rows)
+            if action == "verify", let selected = rows.first, let value = selected["envelope"] as? String { _ = try Wire.envelope(value); envelope = value }
+            return
+        }
         guard value["messageId"] as? String == messageID else { throw CryptonError("Inbox message changed.") }
         if kind == "decrypted", action == "openDiscard", !decrypted { try store.decrypted(wallet,messageID); decrypted = true; return }
         if kind == "removed", ["openDiscard","remove"].contains(action), verificationRequested { try store.removed(wallet,messageID); return }

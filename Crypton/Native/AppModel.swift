@@ -429,10 +429,10 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
                 guard !(wallet is PortalWallet) else { throw CryptonError("The MessageBox inbox requires Metanet Explorer or a BRC-100 wallet.") }
                 let result = try await crypto().inbox(action,wallet:expected,id:id,offset:offset,layer:layer)
                 inboxWallet = try Wire.identity(result["wallet"] as? String ?? "")
-                if ["open","openDiscard","layer"].contains(action) {
+                if ["open","openDiscard","layer"].contains(action) || (action == "verify" && result["content"] is JSON) {
                     guard let content = result["content"] as? JSON else { throw CryptonError("Invalid decrypted inbox message.") }
                     inboxContent = content; inboxID = id; screen = .inboxMessage
-                    if action == "open" { try inboxStore.flag(inboxWallet,id,"read",true) }
+                    if ["open","verify"].contains(action) { try inboxStore.flag(inboxWallet,id,"read",true) }
                     else {
                         privateInboxView = true; privateViewed = foreground
                         privateRemoved = action == "layer" ? previouslyRemoved : result["removed"] as? Bool == true
@@ -451,7 +451,8 @@ enum Screen { case home, recipient, compose, result, contacts, settings, guide, 
                     inboxNotice = "Retrieved \(integer(result["count"]) ?? 0) Crypton message(s). \(integer(result["skipped"]) ?? 0) other or unreadable notification(s) left untouched."
                     clearInboxView(); screen = .inbox
                 }
-                if action == "refresh" { status = "Inbox up to date" }
+                if action == "verify", result["content"] is JSON { status = "Message decrypted · copy retained" }
+                else if ["refresh","find","verify"].contains(action) { status = "Inbox up to date" }
                 else if action == "open" || action == "layer" { status = privateInboxView ? "Private message opened" : "Message decrypted · copy retained" }
                 else { status = privateRemoved || action == "remove" ? "Message removed" : "Server removal pending" }
                 loadInbox(); scheduleRemovalRetry(30)
